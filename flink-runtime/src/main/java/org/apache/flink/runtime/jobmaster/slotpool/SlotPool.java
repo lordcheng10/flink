@@ -40,6 +40,9 @@ import java.util.concurrent.CompletableFuture;
 /**
  * The Interface of a slot pool that manages slots.
  */
+/**
+ *  slot资源管理：申请、释放、持有
+ * */
 public interface SlotPool extends AllocatedSlotActions, AutoCloseable {
 
 	// ------------------------------------------------------------------------
