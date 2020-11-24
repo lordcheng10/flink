@@ -969,6 +969,9 @@ public class CliFrontend {
 	 * Submits the job based on the arguments.
 	 */
 	public static void main(final String[] args) {
+		/**
+		 * 打印基本环境信息
+		 * */
 		EnvironmentInformation.logEnvironmentInfo(LOG, "Command Line Client", args);
 
 		// 1. find the configuration directory

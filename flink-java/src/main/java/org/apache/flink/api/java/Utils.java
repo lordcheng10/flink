@@ -317,6 +317,10 @@ public final class Utils {
 	 * @return Optional containing the resolved factory if it exists, otherwise it's empty
 	 */
 	public static <T> Optional<T> resolveFactory(ThreadLocal<T> threadLocalFactory, @Nullable T staticFactory) {
+		/**
+		 * 如果threadLocalFactory里面有localFactory，那么用threadLocalFactory里的localFactory，
+		 * 否则就用staticFactory
+		 * */
 		final T localFactory = threadLocalFactory.get();
 		final T factory = localFactory == null ? staticFactory : localFactory;
 

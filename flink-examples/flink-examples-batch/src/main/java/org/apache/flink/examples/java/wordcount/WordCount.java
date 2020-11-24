@@ -52,9 +52,15 @@ public class WordCount {
 
 	public static void main(String[] args) throws Exception {
 
+		/**
+		 * 解析传入参数，获取配置
+		 * */
 		final MultipleParameterTool params = MultipleParameterTool.fromArgs(args);
 
 		// set up the execution environment
+		/**
+		 * 创建执行环境,实际会创建local执行环境
+		 * */
 		final ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
 
 		// make parameters available in the web interface

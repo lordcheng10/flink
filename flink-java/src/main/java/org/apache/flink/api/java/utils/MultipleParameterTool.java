@@ -60,10 +60,21 @@ public class MultipleParameterTool extends AbstractParameterTool {
 	 * @return A {@link MultipleParameterTool}
 	 */
 	public static MultipleParameterTool fromArgs(String[] args) {
+		/**
+		 * args为空，因此构建一个空map
+		 * */
 		final Map<String, Collection<String>> map = new HashMap<>(args.length / 2);
 
 		int i = 0;
+		/**
+		 * args为空，所以循环不执行。
+		 *
+		 * 这里是把传入的参数转化为map
+		 * */
 		while (i < args.length) {
+			/**
+			 * 通过Utils工具栏，获取第i个参数
+			 * */
 			final String key = Utils.getKeyFromArgs(args, i);
 
 			i += 1; // try to find the value
@@ -84,6 +95,9 @@ public class MultipleParameterTool extends AbstractParameterTool {
 			}
 		}
 
+		/**
+		 * 根据map构建MultipleParameterTool对象.
+		 * */
 		return fromMultiMap(map);
 	}
 
@@ -102,12 +116,24 @@ public class MultipleParameterTool extends AbstractParameterTool {
 	protected final Map<String, Collection<String>> data;
 
 	private MultipleParameterTool(Map<String, Collection<String>> data) {
+		/**
+		 * 构建一个不可修改的空map
+		 * */
 		this.data = Collections.unmodifiableMap(new HashMap<>(data));
 
+		/**
+		 * 构建一个空map
+		 * */
 		this.defaultData = new ConcurrentHashMap<>(data.size());
 
+		/**
+		 * 将map转换为set
+		 * */
 		this.unrequestedParameters = Collections.newSetFromMap(new ConcurrentHashMap<>(data.size()));
 
+		/**
+		 * 把data数据放到set中
+		 * */
 		unrequestedParameters.addAll(data.keySet());
 	}
 
