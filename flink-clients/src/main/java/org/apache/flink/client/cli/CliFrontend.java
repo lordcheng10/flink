@@ -970,7 +970,7 @@ public class CliFrontend {
 	 */
 	public static void main(final String[] args) {
 		/**
-		 * 打印基本环境信息
+		 * 打印基本环境信息：jvm参数、使用者、代码git版本等
 		 * */
 		EnvironmentInformation.logEnvironmentInfo(LOG, "Command Line Client", args);
 

@@ -372,7 +372,13 @@ public class EnvironmentInformation {
 	 * @param commandLineArgs The arguments accompanying the starting the component.
 	 */
 	public static void logEnvironmentInfo(Logger log, String componentName, String[] commandLineArgs) {
+		/**
+		 * 判断log是否开启
+		 * */
 		if (log.isInfoEnabled()) {
+			/**
+			 * 从.flink-runtime.version.properties文件中，读取代码git版本号等信息
+			 * */
 			RevisionInformation rev = getRevisionInformation();
 			String version = getVersion();
 			String scalaVersion = getScalaVersion();
