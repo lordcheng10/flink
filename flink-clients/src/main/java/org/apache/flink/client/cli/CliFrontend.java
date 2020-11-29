@@ -229,6 +229,9 @@ public class CliFrontend {
 		LOG.debug("Effective executor configuration: {}", effectiveConfiguration);
 
 		try {
+			/**
+			 * 最核心的，将程序提交到JobManager
+			 * */
 			executeProgram(effectiveConfiguration, program);
 		} finally {
 			program.deleteExtractedLibraries();
@@ -991,6 +994,9 @@ public class CliFrontend {
 				customCommandLines);
 
 			SecurityUtils.install(new SecurityConfiguration(cli.configuration));
+			/**
+			 * 这里才是代码核心
+			 * */
 			int retCode = SecurityUtils.getInstalledContext()
 					.runSecured(() -> cli.parseParameters(args));
 			System.exit(retCode);
