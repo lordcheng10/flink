@@ -87,7 +87,11 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * Implementation of a simple command line frontend for executing programs.
  */
 public class CliFrontend {
-
+	/**
+	 * 构建一个这个类的日志对象.
+	 * 提供这个类的打日志功能
+	 * log4j的日志输出 怎么配置的
+	 * */
 	private static final Logger LOG = LoggerFactory.getLogger(CliFrontend.class);
 
 	// actions
@@ -1024,6 +1028,10 @@ public class CliFrontend {
 	 * Submits the job based on the arguments.
 	 */
 	public static void main(final String[] args) {
+		/**
+		 * 这里主要是打印一些环境信息，主要就是一些版本号.
+		 * 这里主要是通过Versions INSTANCE = new Versions();来加载配置文件。然后打印出来
+		 * */
 		EnvironmentInformation.logEnvironmentInfo(LOG, "Command Line Client", args);
 
 		// 1. find the configuration directory

@@ -131,6 +131,9 @@ public class EnvironmentInformation {
 
 		private static final String FAIL_MESSAGE = "The file " + PROP_FILE + " has not been generated correctly. You MUST run 'mvn generate-sources' in the flink-runtime module.";
 
+		/**
+		 * 如果没获取到该key，或者获取到的值是'$'，那么就返回一个默认值UNKNOWN
+		 * */
 		private String getProperty(Properties properties, String key, String defaultValue) {
 			String value = properties.getProperty(key);
 			if (value == null || value.charAt(0) == '$') {
@@ -141,6 +144,18 @@ public class EnvironmentInformation {
 
 		public Versions() {
 			ClassLoader classLoader = EnvironmentInformation.class.getClassLoader();
+			/**
+			 * classLoader.getResourceAsStream(PROP_FILE)是从resource文件里加载给定文件。
+			 * 这里主要是加载.flink-runtime.version.properties，然后在通过getProperty方法获取每个配置项。
+			 * getProperty主要是对未知key返回一个UNKNOWN
+			 * TODO-question1：.flink-runtime.version.properties这个文件记录版本信息 有什么用呢？看起来只是在这里打印一下各种版本信息，没啥毛用
+			 * 看了下https://issues.apache.org/jira/browse/FLINK-16871，似乎作者就只是想在运行的时候，暴露出更多的build信息，
+			 * 但这些信息暴露出来又什么作用，不能理解. 不知道什么情况下想看这些信息。喔，比如如果发布了一个新的版本，运行后，你怎么知道跑的是哪个版本呢？
+			 * 哈哈，这样果然是一个好的方式，运行后，就会把这些信息记录到一个文件中，这样方便查看当前运行的是哪个版本，已经哪个提交id。
+			 * 现在我为了确认当前运行的包是我修改的，我还得在启动前确认下md5，这种方式并不是特别靠谱，而且落后。
+			 * TODO-question2：那问题来了，这个文件是什么时候生成的呢？怎么生成的？
+			 * 怎么在构建的时候，把这些信息收集起来并写到.flink-runtime.version.properties文件的呢？
+			 * */
 			try (InputStream propFile = classLoader.getResourceAsStream(PROP_FILE)) {
 				if (propFile != null) {
 					Properties properties = new Properties();
@@ -152,12 +167,23 @@ public class EnvironmentInformation {
 					gitCommitId = getProperty(properties, "git.commit.id", UNKNOWN_COMMIT_ID);
 					gitCommitIdAbbrev = getProperty(properties, "git.commit.id.abbrev", UNKNOWN_COMMIT_ID_ABBREV);
 
+					/**
+					 * DateTimeFormatter是jdk8提出来的，我们可以用DateTimeFormatter来代替SimpleDateFormat
+					 * DateTimeFormatter是线程安全的， SimpleDateFormat不是线程安全的.
+					 * 这里是构建git的时间格式类
+					 * */
 					// This is to reliably parse the datetime format configured in the git-commit-id-plugin
 					DateTimeFormatter gitDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ");
 
+					/**
+					 * 构建一个柏林的时间格式类。
+					 * */
 					// Default format is in Berlin timezone because that is where Flink originated.
 					DateTimeFormatter berlinDateTime = DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(ZoneId.of("Europe/Berlin"));
 
+					/**
+					 * git commit时间和build时间按照两种格式来定义
+					 * */
 					try {
 						String propGitCommitTime = getProperty(properties, "git.commit.time", DEFAULT_TIME_STRING);
 						gitCommitTime = gitDateTimeFormatter.parse(propGitCommitTime, Instant::from);
@@ -365,6 +391,8 @@ public class EnvironmentInformation {
 	}
 	
 	/**
+	 * 这里主要是通过Versions INSTANCE = new Versions();来加载配置文件。然后打印出来
+	 *
 	 * Logs information about the environment, like code revision, current user, Java version,
 	 * and JVM parameters.
 	 *
