@@ -17,10 +17,20 @@
 # limitations under the License.
 ################################################################################
 
+<<COMMENT
+这个方法主要是返回两个变量值,通过echo的方式。
+FLINK_CLASSPATH和FLINK_DIST.
+这两个变量有什么作用.
+COMMENT
 constructFlinkClassPath() {
     local FLINK_DIST
     local FLINK_CLASSPATH
 
+<<COMMENT
+    有个问题哈 jarfile 是哪里定义的?
+    -d代表分隔符，这里是按照空格分割
+    -r
+COMMENT
     while read -d '' -r jarfile ; do
         if [[ "$jarfile" =~ .*/flink-dist[^/]*.jar$ ]]; then
             FLINK_DIST="$FLINK_DIST":"$jarfile"

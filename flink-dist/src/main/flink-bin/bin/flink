@@ -54,6 +54,7 @@ bin=`dirname "$target"`
 #这里加.  干啥呢？ 加点类似于你用：./test.sh执行脚本一样，如果没有加点，那就需要加上执行权限后才能直接执行，如果加了点，那就不需要赋予权限就可以执行了，
 #eg: . /home/kafka/software/config.sh  可以执行，但直接/home/kafka/software/config.sh这样，
 # 那么就会报：-bash: /home/kafka/software/config.sh: Permission denied，除非chmod赋予权限。
+#其实，点(.)命令 即source命令. source命令会在当前shell进程执行，而不会另起一个新的shell子进程
 # get flink config
 . "$bin"/config.sh
 
@@ -65,6 +66,7 @@ fi
 
 #这是干啥的？在config.sh里定义了constructFlinkClassPath方法，
 # 把这个方法名赋予CC_CLASSPATH，然后在后面通过$CC_CLASSPATH就可以调用到该方法
+# constructFlinkClassPath方法是干啥的呢？
 CC_CLASSPATH=`constructFlinkClassPath`
 
 #FLINK_LOG_DIR在config.sh脚本里定义了，FLINK_LOG_DIR作为存放日志的目录，怎么定义的呢？
@@ -79,6 +81,6 @@ log_setting=(-Dlog.file="$log" -Dlog4j.configuration=file:"$FLINK_CONF_DIR"/log4
 FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} ${FLINK_ENV_JAVA_OPTS_CLI}"
 
 #JVM_ARGS、JAVA_RUN、FLINK_ENV_JAVA_OPTS、INTERNAL_HADOOP_CLASSPATHS都是在config.sh中定义的。
-#exec 是啥
+#exec 是啥?是一个启动命令，用它来启动程序后，新启动的进程会替代原来的启动进程，进程号不变
 # Add HADOOP_CLASSPATH to allow the usage of Hadoop file systems
 exec $JAVA_RUN $JVM_ARGS $FLINK_ENV_JAVA_OPTS "${log_setting[@]}" -classpath "`manglePathList "$CC_CLASSPATH:$INTERNAL_HADOOP_CLASSPATHS"`" org.apache.flink.client.cli.CliFrontend "$@"
