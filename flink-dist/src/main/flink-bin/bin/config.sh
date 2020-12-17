@@ -27,11 +27,65 @@ constructFlinkClassPath() {
     local FLINK_CLASSPATH
 
 <<COMMENT
-    有个问题哈 jarfile 是哪里定义的?
-    -d代表分隔符，这里是按照空格分割
-    -r
+    错误理解：有个问题哈 jarfile 是哪里定义的?  jarfile不是哪里定义的，是要求是jar类型文件：-r jarfile  要求是jar类型文件
+    -d 代表分隔符，这里是按照空格分割
+    -r 要求是jar类型文件
+
+    上面的理解是错误的，其实jarfile是一个变量，谁给它赋值呢？是<(find "$FLINK_LIB_DIR" ! -type d -name '*.jar' -print0 | sort -z)这个命令给赋值的，
+    你也可以在done后面接入一个文件，那么也会读取文件每一行来赋值，比如：
+    while read line;do ; echo $line; done < t.txt
+
+    而-d确实是代表分隔符，这里需要注意，比如文件内容是a,b,c 那么-d, 不会吧c打出来，需要在c后面也加一个， 比如： a,b,c,  eg:
+    while read -d, line;do ; echo $line; done < <(echo "a,b,c")
+    输出：
+    a
+    b
+
+    while read -d, line;do ; echo $line; done < <(echo "a,b,c,")
+    输出：
+    a
+    b
+    c
+
+    那么-r到底是什么含义呢？之前以为是文件格式 ，后面接文件类型，现在看起来是错误的。
+    read其实就是一个命令，read line 表示接受终端输入并赋值给line变量,eg:
+    ➜  ~ read -r line
+    wocao
+    ➜  ~ echo $line
+    wocao
+
+    而-d和-r都是read命令传入参数，read命令参数有：
+    -d 后面跟一个标志符，其实只有其后的第一个字符有用，作为结束的标志。
+    作为每次读取结束的标识符号，也就是说读取到哪里结束，然后赋值给变量。只有读取到该结束符后，才会结束读取，赋值给变量，
+    否则不会结束并赋值给变量，这也是为啥上面如果c后面没有逗号，就不会打出c的原因：while read -d, line;do ; echo $line; done < <(echo "a,b,c,")
+    -r 屏蔽\，如果没有该选项，则\作为一个转义字符，有的话 \就是个正常的字符了。
+	参考： http://note.youdao.com/s/Yneyew1P
+
+	接下来是这个命令：<(find "$FLINK_LIB_DIR" ! -type d -name '*.jar' -print0 | sort -z)
+	如果是从文件读取那么done后面只会有一个< ，但是如果是通过命令获取内容，那么还得加个< ,并且用括号把命令括起来，eg：
+	 while read line; do echo $line ; done < <(echo "aa")
+	 但为啥要加个<，感觉还没找到个合理的解释。。。
+
+	 <(find "$FLINK_LIB_DIR" ! -type d -name '*.jar' -print0 | sort -z)这个命令的含义是把jar包全部列出来.
+
+	 find 命令，有一些参数 ,这里 "$FLINK_LIB_DIR" 表示要查找的目录位置，  !是一个否定参数，否定接下来紧挨着的参数,
+	 -type d 表示目录，-name '*.jar' 表示以.jar结尾的。
+	 -print0：意思就是如果找到了符合条件的文件或者目录，那么按照同一行的格式输出到标准输出中。
+	 最后sort -z  表示以NUL作为记录分隔符。 默认情况下，文件中的记录应以换行符分隔。使用此选项时，NUL（'\ 0'）用作记录分隔符。
+
+	 参考：https://man.linuxde.net/find
+
+
+	 这个while循环实际就是在构建不同类型的classpath,
+	 FLINK_DIST 代表flink 分布式jar包path
+	 FLINK_CLASSPATH  代表其他的path
+
+
+➜  ~
 COMMENT
     while read -d '' -r jarfile ; do
+    	# =~后面接正则表达式，这里在进行模式匹配，注意=~后面的正则表达式，不能加引号，如果使用变量，在变量赋值的时候可以加，但在if条件里面也不能加
+    	#参考：https://www.cnblogs.com/gaochsh/p/6901807.html
         if [[ "$jarfile" =~ .*/flink-dist[^/]*.jar$ ]]; then
             FLINK_DIST="$FLINK_DIST":"$jarfile"
         elif [[ "$FLINK_CLASSPATH" == "" ]]; then
@@ -41,6 +95,7 @@ COMMENT
         fi
     done < <(find "$FLINK_LIB_DIR" ! -type d -name '*.jar' -print0 | sort -z)
 
+    #检查是否有分布式jar包，没有就退出
     if [[ "$FLINK_DIST" == "" ]]; then
         # write error message to stderr since stdout is stored as the classpath
         (>&2 echo "[ERROR] Flink distribution jar not found in $FLINK_LIB_DIR.")
