@@ -97,6 +97,9 @@ COMMENT
 
     #检查是否有分布式jar包，没有就退出
     if [[ "$FLINK_DIST" == "" ]]; then
+    	#>&2代表标准输出？
+    	#linux中有三类文件是一直打开的，标准输入(0)、标准输出(1)、错误输出(2)，这里>&2，意思是把后面的内容输出到错误输出中。
+    	#那这里有个问题了，我输出到标准输出和错误输出有什么区别?我看最终都显示到了控制台了，看起来似乎一样
         # write error message to stderr since stdout is stored as the classpath
         (>&2 echo "[ERROR] Flink distribution jar not found in $FLINK_LIB_DIR.")
 
