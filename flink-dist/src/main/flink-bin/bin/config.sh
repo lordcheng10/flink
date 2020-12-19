@@ -103,16 +103,33 @@ COMMENT
         # write error message to stderr since stdout is stored as the classpath
         (>&2 echo "[ERROR] Flink distribution jar not found in $FLINK_LIB_DIR.")
 
+		#这种情况下就退出
         # exit function with empty classpath to force process failure
         exit 1
     fi
 
+	#通过echo 的方式返回方法值
     echo "$FLINK_CLASSPATH""$FLINK_DIST"
 }
 
+<<COMMENT
+这里找出flink 分布式jar包
+COMMENT
 findFlinkDistJar() {
+	#local是什么？local在函数中定义变量，用来约束变量作用域，将变量作用域固定到函数内部；
+	# 如果不用local定义，函数中定义的变量作用域是从调用该函数开始到shell结束或变量删除的地方为止 ;
+	# 参考：https://blog.csdn.net/wangjianno2/article/details/50200617
+	# 这里定义了一个作用域在函数内部的局部变量FLINK_DIST，
+	# 把lib目录下的flink-dist前缀的jar包找出来，赋值给FLINK_DIST,
+	# 这里找出来的都是每个jar的绝对路径，一行是一个路径，类似：
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/connect-file-2.8.0-SNAPSHOT.jar
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/javassist-3.26.0-GA.jar
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/jakarta.validation-api-2.0.2.jar
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/jackson-module-jaxb-annotations-2.10.5.jar
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/commons-lang3-3.8.1.jar
     local FLINK_DIST="`find "$FLINK_LIB_DIR" -name 'flink-dist*.jar'`"
 
+	#如果没有分布式jar包，那么久报错退出
     if [[ "$FLINK_DIST" == "" ]]; then
         # write error message to stderr since stdout is stored as the classpath
         (>&2 echo "[ERROR] Flink distribution jar not found in $FLINK_LIB_DIR.")
@@ -121,6 +138,8 @@ findFlinkDistJar() {
         exit 1
     fi
 
+
+	#最后还是以echo的方式返回值，我发现shell的函数返回值，一般都是用echo方式
     echo "$FLINK_DIST"
 }
 
