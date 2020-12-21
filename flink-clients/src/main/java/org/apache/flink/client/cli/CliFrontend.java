@@ -1034,9 +1034,17 @@ public class CliFrontend {
 		 * */
 		EnvironmentInformation.logEnvironmentInfo(LOG, "Command Line Client", args);
 
+		/**
+		 * 从env里面获取配置目录config的位置。
+		 * */
 		// 1. find the configuration directory
 		final String configurationDirectory = getConfigurationDirectoryFromEnv();
 
+		/**
+		 * 加载配置.
+		 *
+		 * GlobalConfiguration 叫全局配置，这个名为啥叫全局配置呢？意思是它里面的配置是全局生效的，或者全局可以获取的？
+		 * */
 		// 2. load the global configuration
 		final Configuration configuration = GlobalConfiguration.loadConfiguration(configurationDirectory);
 
@@ -1067,29 +1075,71 @@ public class CliFrontend {
 	//  Miscellaneous Utilities
 	// --------------------------------------------------------------------------------------------
 
+	/**
+	 * 这个方法主要是返回config配置目录路径，分别从：
+	 * ①当前目录找config目录；②当前目录的上一个目录去找；
+	 * ③环境变量中去找。
+	 * */
 	public static String getConfigurationDirectoryFromEnv() {
+		/**
+		 * 之前执行flink脚本的时候，里面通过运行config.sh把一些变量声明到了环境变量中，
+		 * 似乎 System.getenv可以从环境变量中获取值。果然System.getenv用来获取系统环境变量的。
+		 *
+		 * 居然还可以以这种方式来获取，似乎配置变量有多中方式：
+		 * ①写到配置文件中，然后程序读取；
+		 * ②写到环境变量中读取；
+		 * ③脚本传参（也就是从main函数中传入）;
+		 * */
 		String location = System.getenv(ConfigConstants.ENV_FLINK_CONF_DIR);
 
+		/**
+		 * 如果存在该ENV_FLINK_CONF_DIR环境变量 (location不为null)
+		 * */
 		if (location != null) {
 			if (new File(location).exists()) {
+				/**
+				 * 如果缺失存在该配置文件，或者说设置到环境变量中的文件位置没错，
+				 * 那么直接返回文件位置。
+				 * */
 				return location;
 			}
 			else {
+				//如果配置了目录，但是发现不存在，那么抛异常
 				throw new RuntimeException("The configuration directory '" + location + "', specified in the '" +
 					ConfigConstants.ENV_FLINK_CONF_DIR + "' environment variable, does not exist.");
 			}
 		}
 		else if (new File(CONFIG_DIRECTORY_FALLBACK_1).exists()) {
+			/**
+			 * 如果没有特别配置config目录，那么就从当前目录往回退一个目录，去找config目录.
+			 * private static final String CONFIG_DIRECTORY_FALLBACK_1 = "../conf";
+			 *
+			 * location为null，那么也就是没有配置ENV_FLINK_CONF_DIR，
+			 * 那么就看是CONFIG_DIRECTORY_FALLBACK_1对应目录是否存在。
+			 * */
 			location = CONFIG_DIRECTORY_FALLBACK_1;
 		}
 		else if (new File(CONFIG_DIRECTORY_FALLBACK_2).exists()) {
+			/**
+			 * 如果上一个目录也没有config目录，那么就在当前目录下去找config目录
+			 * 	private static final String CONFIG_DIRECTORY_FALLBACK_2 = "conf";
+			 *
+			 * 看CONFIG_DIRECTORY_FALLBACK_2是否存在，如果存在用CONFIG_DIRECTORY_FALLBACK_2为location.
+			 * */
 			location = CONFIG_DIRECTORY_FALLBACK_2;
 		}
 		else {
+			/**
+			 * 如果当前目录和当前目录的上一个目录以及环境变量里都没有config目录，那么就抛异常。
+			 * */
 			throw new RuntimeException("The configuration directory was not specified. " +
 					"Please specify the directory containing the configuration file through the '" +
 				ConfigConstants.ENV_FLINK_CONF_DIR + "' environment variable.");
 		}
+
+		/**
+		 * 最后返回locatition
+		 * */
 		return location;
 	}
 

@@ -83,6 +83,13 @@ public final class GlobalConfiguration {
 	}
 
 	/**
+	 * 从给定的目录中去加载配置文件。
+	 *
+	 * 也支持yml文件配置。
+	 *
+	 * configDir是包含配置文件的目录文件夹
+	 *
+	 *
 	 * Loads the configuration files from the specified directory.
 	 *
 	 * <p>YAML files are supported as configuration files.
@@ -95,6 +102,12 @@ public final class GlobalConfiguration {
 	}
 
 	/**
+	 * 从给定的目录中加载配置。
+	 * 如果dynamicProperties不为null，那么dynamicProperties里的配置也要加载。
+	 *
+	 * 这个方法除了提供加载配置文件外，还额外支持从动态配置对象dynamicProperties里加载，
+	 * 动态配置项可以为null，但配置文件项不能为null；
+	 *
 	 * Loads the configuration files from the specified directory. If the dynamic properties
 	 * configuration is not null, then it is added to the loaded configuration.
 	 *
@@ -103,11 +116,17 @@ public final class GlobalConfiguration {
 	 * @return The configuration loaded from the given configuration directory
 	 */
 	public static Configuration loadConfiguration(final String configDir, @Nullable final Configuration dynamicProperties) {
-
+		/**
+		 * 配置文件路径不能为null
+		 * */
 		if (configDir == null) {
 			throw new IllegalArgumentException("Given configuration directory is null, cannot load configuration");
 		}
 
+		/**
+		 * 构建配置目录对象；
+		 * 为啥这里要用final修饰呢？似乎只是为了防止confDirFile被修改？
+		 * */
 		final File confDirFile = new File(configDir);
 		if (!(confDirFile.exists())) {
 			throw new IllegalConfigurationException(
@@ -115,6 +134,9 @@ public final class GlobalConfiguration {
 					"' (" + confDirFile.getAbsolutePath() + ") does not describe an existing directory.");
 		}
 
+		/**
+		 * 从配置文件中，构建YML文件对象
+		 * */
 		// get Flink yaml configuration file
 		final File yamlConfigFile = new File(confDirFile, FLINK_CONF_FILENAME);
 
@@ -124,8 +146,15 @@ public final class GlobalConfiguration {
 					"' (" + confDirFile.getAbsolutePath() + ") does not exist.");
 		}
 
+		/**
+		 * 加载YML配置文件,看起来只加载yml的配置文件，其他文件配置不加载？
+		 * */
 		Configuration configuration = loadYAMLResource(yamlConfigFile);
 
+
+		/**
+		 * 最后从动态配置对象中加载配置项
+		 * */
 		if (dynamicProperties != null) {
 			configuration.addAll(dynamicProperties);
 		}

@@ -147,6 +147,10 @@ findFlinkDistJar() {
 # cygwin. Cygwin paths are like linux paths, i.e. /path/to/somewhere
 # but the windows java version expects them in Windows Format, i.e. C:\bla\blub.
 # "cygpath" can do the conversion.
+<<COMMENT
+uname -s 命令用来显示操作系统名字
+
+COMMENT
 manglePath() {
     UNAME=$(uname -s)
     if [ "${UNAME:0:6}" == "CYGWIN" ]; then
