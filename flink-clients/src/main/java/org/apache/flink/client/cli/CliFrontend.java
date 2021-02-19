@@ -1048,10 +1048,18 @@ public class CliFrontend {
 		// 2. load the global configuration
 		final Configuration configuration = GlobalConfiguration.loadConfiguration(configurationDirectory);
 
+		/**
+		 * 传入config目录配置路径和加载出来的配置项configuration
+		 *
+		 * 有个问题，这里的CustomCommandLine到底是什么含义，作用是啥。
+		 *
+		 * 似乎是对应不同的提交客户端，比如：FlinkYarnSessionCli
+		 * */
 		// 3. load the custom command lines
 		final List<CustomCommandLine> customCommandLines = loadCustomCommandLines(
 			configuration,
 			configurationDirectory);
+
 
 		try {
 			final CliFrontend cli = new CliFrontend(
@@ -1158,12 +1166,22 @@ public class CliFrontend {
 
 	public static List<CustomCommandLine> loadCustomCommandLines(Configuration configuration, String configurationDirectory) {
 		List<CustomCommandLine> customCommandLines = new ArrayList<>();
+		/**
+		 * GenericCLI是什么玩意
+		 *
+		 * 这里似乎是在加载不同版本的客户端：yarn版本、通用场景等。
+		 * */
 		customCommandLines.add(new GenericCLI(configuration, configurationDirectory));
 
 		//	Command line interface of the YARN session, with a special initialization here
 		//	to prefix all options with y/yarn.
 		final String flinkYarnSessionCLI = "org.apache.flink.yarn.cli.FlinkYarnSessionCli";
 		try {
+			/**
+			 * 通过loadCustomCommandLine来加载FlinkYarnSessionCli
+			 *
+			 * 有个问题，这里的CustomCommandLine到底是什么含义，作用是啥。
+			 * */
 			customCommandLines.add(
 				loadCustomCommandLine(flinkYarnSessionCLI,
 					configuration,
@@ -1181,6 +1199,7 @@ public class CliFrontend {
 			}
 		}
 
+		//添加默认client
 		//	Tips: DefaultCLI must be added at last, because getActiveCustomCommandLine(..) will get the
 		//	      active CustomCommandLine in order and DefaultCLI isActive always return true.
 		customCommandLines.add(new DefaultCLI());
@@ -1214,10 +1233,13 @@ public class CliFrontend {
 	 * @param params The constructor parameters
 	 */
 	private static CustomCommandLine loadCustomCommandLine(String className, Object... params) throws Exception {
-
+		/**
+		 * 这种方式是反射吧？Class.forName用来加载类的。
+		 * */
 		Class<? extends CustomCommandLine> customCliClass =
 			Class.forName(className).asSubclass(CustomCommandLine.class);
 
+		//构造函数参数
 		// construct class types from the parameters
 		Class<?>[] types = new Class<?>[params.length];
 		for (int i = 0; i < params.length; i++) {
@@ -1225,8 +1247,10 @@ public class CliFrontend {
 			types[i] = params[i].getClass();
 		}
 
+		//这里应该是传入参数
 		Constructor<? extends CustomCommandLine> constructor = customCliClass.getConstructor(types);
 
+		//这里实例化
 		return constructor.newInstance(params);
 	}
 

@@ -102,6 +102,10 @@ public final class GlobalConfiguration {
 	}
 
 	/**
+	 * 总结：①从yml文件 中读取配置；②如果存在动态配置项dynamicProperties，那么从dynamicProperties中也读取；
+	 *
+	 * 有个问题，这里的动态配置项怎么启用？我可以不重启作业动态修改配置？
+	 *
 	 * 从给定的目录中加载配置。
 	 * 如果dynamicProperties不为null，那么dynamicProperties里的配置也要加载。
 	 *
@@ -147,7 +151,7 @@ public final class GlobalConfiguration {
 		}
 
 		/**
-		 * 加载YML配置文件,看起来只加载yml的配置文件，其他文件配置不加载？
+		 * 加载YML配置文件,看起来只加载yml的配置文件，其他文件配置不加载？ 或者就没有其他类型的配置文件
 		 * */
 		Configuration configuration = loadYAMLResource(yamlConfigFile);
 
