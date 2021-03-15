@@ -24,6 +24,11 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Target;
 
 /**
+ * 标注类和方法以供公共使用，但具有不断发展的接口。带有此注释的类和方法用于公共使用，并且具有稳定的行为。
+ * 然而，它们的接口和签名不被认为是稳定的，可能会被更改由于版本更新。
+ *
+ * 关于flink的注解参考：https://blog.csdn.net/qq1010234991/article/details/104073553
+ *
  * Annotation to mark classes and methods for public use, but with evolving interfaces.
  *
  * <p>Classes and methods with this annotation are intended for public use and have stable behavior.

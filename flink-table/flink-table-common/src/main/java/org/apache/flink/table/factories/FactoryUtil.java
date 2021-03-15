@@ -333,6 +333,9 @@ public final class FactoryUtil {
 		}
 	}
 
+	/**
+	 * 这个是用来自动查找factory的，比如方便各种connector的实现类的扩展，利用SPI机制 自动发现加载一些connector实现类。比如我之前实现的doris-connector
+	 * */
 	private static List<Factory> discoverFactories(ClassLoader classLoader) {
 		try {
 			final List<Factory> result = new LinkedList<>();

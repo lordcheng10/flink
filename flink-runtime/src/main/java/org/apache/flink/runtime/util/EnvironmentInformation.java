@@ -85,6 +85,9 @@ public class EnvironmentInformation {
 	/**
 	 * @return The last known abbreviated commit id of this version of the software.
 	 */
+	/**
+	 * 获取最新提交id
+	 * */
 	public static String getGitCommitIdAbbrev() {
 		return getVersionsInstance().gitCommitIdAbbrev;
 	}
@@ -138,22 +141,53 @@ public class EnvironmentInformation {
 			return value;
 		}
 
+		/**
+		 * 通过读取.flink-runtime.version.properties文件，来获取相应的版本信息。
+		 * */
 		public Versions() {
+			/**
+			 * 获取EnvironmentInformation类的类加载器。
+			 * */
 			ClassLoader classLoader = EnvironmentInformation.class.getClassLoader();
+
+			/**
+			 * 获取配置文件输入流。
+			 * classLoader.getResourceAsStream(PROP_FILE)是一种读取配置的方法。
+			 * */
 			try (InputStream propFile = classLoader.getResourceAsStream(PROP_FILE)) {
 				if (propFile != null) {
+					/**
+					 * 输入流加载到Properties中
+					 * */
 					Properties properties = new Properties();
 					properties.load(propFile);
 
+					/**
+					 * PROP_FILE文件内容：
+					 * project.version=${project.version}
+					 * scala.binary.version=${scala.binary.version}
+					 *
+					 * git.commit.id=${git.commit.id}
+					 * git.commit.id.abbrev=${git.commit.id.abbrev}
+					 *
+					 * git.commit.time=${git.commit.time}
+					 * git.build.time=${git.build.time}
+					 * */
 					projectVersion = getProperty(properties, "project.version", UNKNOWN);
 					scalaVersion = getProperty(properties, "scala.binary.version", UNKNOWN);
 
 					gitCommitId = getProperty(properties, "git.commit.id", UNKNOWN_COMMIT_ID);
 					gitCommitIdAbbrev = getProperty(properties, "git.commit.id.abbrev", UNKNOWN_COMMIT_ID_ABBREV);
 
+					/**
+					 * 准备好时间格式类，git.commit.time和git.build.time是时间，需要转换成标准格式
+					 * */
 					// This is to reliably parse the datetime format configured in the git-commit-id-plugin
 					DateTimeFormatter gitDateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ");
 
+					/**
+					 * 构建一个柏林的时间格式类。
+					 * */
 					// Default format is in Berlin timezone because that is where Flink originated.
 					DateTimeFormatter berlinDateTime = DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(ZoneId.of("Europe/Berlin"));
 
@@ -176,6 +210,9 @@ public class EnvironmentInformation {
 		}
 	}
 
+	/**
+	 * 这个会去加载所有的版本信息，后面会从这里获取所有的版本信息，比如scala版本号等
+	 * */
 	private static final class VersionsHolder {
 		static final Versions INSTANCE = new Versions();
 	}
@@ -377,12 +414,22 @@ public class EnvironmentInformation {
 		 * */
 		if (log.isInfoEnabled()) {
 			/**
-			 * 从.flink-runtime.version.properties文件中，读取代码git版本号等信息
+			 * 从.flink-runtime.version.properties文件中，读取代码git版本号等信息。
+			 * getRevisionInformation返回最新的git提交id和时间.
 			 * */
 			RevisionInformation rev = getRevisionInformation();
+			/**
+			 * 获取项目版本号
+			 * */
 			String version = getVersion();
+			/**
+			 * 获取scala版本号
+			 * */
 			String scalaVersion = getScalaVersion();
 
+			/**
+			 * 获取jvm版本号
+			 * */
 			String jvmVersion = getJvmVersion();
 			String[] options = getJvmStartupOptionsArray();
 
