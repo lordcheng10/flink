@@ -37,6 +37,7 @@ public interface SinkFunction<IN> extends Function, Serializable {
 	default void invoke(IN value) throws Exception {}
 
 	/**
+	 * 其实这里方法注释已经解释清楚了，invoke方法是在每条消息来的时候调用。
 	 * Writes the given value to the sink. This function is called for every record.
 	 *
 	 * <p>You have to override this method when implementing a {@code SinkFunction}, this is a
