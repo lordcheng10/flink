@@ -271,6 +271,12 @@ class AkkaInvocationHandler implements InvocationHandler, AkkaBasedEndpoint, Rpc
 					parameterTypes,
 					args);
 
+				/**
+				 * 之前在小红书 搞flink的时候就遇到过，有抛这个异常的。
+				 * 看了下网上的分析说的是task的异常trace会通过akka的
+				 * rpc传递给JM，JM收到后才可以在web上显示。
+				 * 但是这个异常trace又太大了。从而超过了，抛异常。
+				 * */
 				if (remoteRpcInvocation.getSize() > maximumFramesize) {
 					throw new IOException(
 						String.format(
