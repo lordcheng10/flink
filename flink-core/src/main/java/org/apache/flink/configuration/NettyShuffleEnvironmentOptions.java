@@ -229,6 +229,9 @@ public class NettyShuffleEnvironmentOptions {
 					"tasks have occupied all the buffers and the downstream tasks are waiting for the exclusive buffers. The timeout breaks" +
 					"the tie by failing the request of exclusive buffers and ask users to increase the number of total buffers.");
 
+	/***
+	 * 这个配置是用来配置，当使用BoundedBlockingSubpartition来进行数据交换的时候（我理解也就是批处理的时候），通过这个配置来决定用什么方式来存储中间结果状态数据，可选的方式有内存和文件。
+	 */
 	@Documentation.Section(Documentation.Sections.ALL_TASK_MANAGER_NETWORK)
 	public static final ConfigOption<String> NETWORK_BLOCKING_SHUFFLE_TYPE =
 		key("taskmanager.network.blocking-shuffle.type")

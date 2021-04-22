@@ -40,6 +40,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
+ * 看起来FileChannelMemoryMappedBoundedData 中fileChannel和filePath就是分别对于的文件和内存（这里的内存用的mmap，确实和取名是一致的。）
+ *
+ *
  * An implementation of {@link BoundedData} that writes directly into a File Channel
  * and maps the file into memory after writing. Readers simply access the memory mapped
  * data. All readers access the same memory, which is mapped in a read-only manner.

@@ -280,6 +280,8 @@ final class BoundedBlockingSubpartition extends ResultSubpartition {
 	}
 
 	/**
+	 *
+	 * 看起来调用哪个接口就创建那种类型的BoundedData实现类，从而使得中间状态存到不同位置：内存中、文件中、mmap存储和文件都存
 	 * Creates a BoundedBlockingSubpartition that stores the partition data in memory mapped file.
 	 * Data is written to and read from the mapped memory region. Disk spilling happens lazily, when the
 	 * OS swaps out the pages from the memory mapped file.

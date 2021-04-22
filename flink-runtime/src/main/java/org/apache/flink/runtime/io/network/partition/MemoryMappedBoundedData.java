@@ -69,6 +69,9 @@ final class MemoryMappedBoundedData implements BoundedData {
 	@Nullable
 	private ByteBuffer currentBuffer;
 
+	/**
+	 * 这个变量是干嘛的呀
+	 * */
 	/** All memory mapped regions that are already full (completed). */
 	private final ArrayList<ByteBuffer> fullBuffers;
 
@@ -190,6 +193,10 @@ final class MemoryMappedBoundedData implements BoundedData {
 			fullBuffers.add(currentBuffer);
 		}
 
+		/**
+		 * 这里就是构建mmap文件，kafka也是这么构建的，eg：
+		 *           raf.getChannel.map(FileChannel.MapMode.READ_ONLY, 0, _length)
+		 * */
 		currentBuffer = file.map(MapMode.READ_WRITE, nextMappingOffset, mappingSize);
 		currentBuffer.order(ByteOrder.nativeOrder());
 		nextMappingOffset += mappingSize;

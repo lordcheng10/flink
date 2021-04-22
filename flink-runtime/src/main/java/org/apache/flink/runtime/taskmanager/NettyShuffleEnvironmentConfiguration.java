@@ -347,6 +347,19 @@ public class NettyShuffleEnvironmentConfiguration {
 		return nettyConfig;
 	}
 
+	/**
+	 * 原来如此，根据taskmanager.network.blocking-shuffle.type这个配置来决定，中间状态数据存储到什么中，
+	 * mmap的话 ，会把数据在内存和文件都存上。
+	 * file的话，会存到文件中。
+	 * 如果都不配置的话，那么就使用默认方式：根据操作系统是否是64位来决定创建mmap还是file,64位的话，存储到FILE_MMAP（这个是内存和文件都存）中，32位的话存储到FILE中，都不是还是存到FILE文件中。
+	 *
+	 * 看起来不管怎么样都不会只存在内存中。
+	 *
+	 * BoundedBlockingSubpartition类是以阻塞的方式传输，数据先写入，然后再消费，更合适批处理任务。
+	 *
+	 * 对于内存和文件都存放的方式，那么怎么实现数据同步，读写方式是怎样的 ？是否都是存的全量数据？
+	 *
+	 * */
 	private static BoundedBlockingSubpartitionType getBlockingSubpartitionType(Configuration config) {
 		String transport = config.getString(NettyShuffleEnvironmentOptions.NETWORK_BLOCKING_SHUFFLE_TYPE);
 

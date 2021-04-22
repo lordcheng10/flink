@@ -27,6 +27,8 @@ import java.io.IOException;
 public enum BoundedBlockingSubpartitionType {
 
 	/**
+	 *  看类型，如果是FILE类型就创建FileChannelBoundedData实现类。
+	 *  如果是想把中间结果放到内存中，就创建MemoryMappedBoundedData实现类。
 	 * A BoundedBlockingSubpartition type that simply stores the partition data in a file.
 	 * Data is eagerly spilled (written to disk) and readers directly read from the file.
 	 */
@@ -64,6 +66,9 @@ public enum BoundedBlockingSubpartitionType {
 	},
 
 	/**
+	 *
+	 * 对于内存和文件都存放的方式，那么怎么实现数据同步，读写方式是怎样的 ？是否都是存的全量数据？
+	 *
 	 * Creates a BoundedBlockingSubpartition that stores the partition data in a file and
 	 * memory maps that file for reading.
 	 * Data is eagerly spilled (written to disk) and then mapped into memory. The main
