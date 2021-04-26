@@ -83,4 +83,4 @@ FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} ${FLINK_ENV_JAVA_OPTS_CLI}"
 #JVM_ARGS、JAVA_RUN、FLINK_ENV_JAVA_OPTS、INTERNAL_HADOOP_CLASSPATHS都是在config.sh中定义的。
 #exec 是啥?是一个启动命令，用它来启动程序后，新启动的进程会替代原来的启动进程，进程号不变
 # Add HADOOP_CLASSPATH to allow the usage of Hadoop file systems
-exec $JAVA_RUN $JVM_ARGS $FLINK_ENV_JAVA_OPTS "${log_setting[@]}" -classpath "`manglePathList "$CC_CLASSPATH:$INTERNAL_HADOOP_CLASSPATHS"`" org.apache.flink.client.cli.CliFrontend "$@"
+exec "${JAVA_RUN}" $JVM_ARGS $FLINK_ENV_JAVA_OPTS "${log_setting[@]}" -classpath "`manglePathList "$CC_CLASSPATH:$INTERNAL_HADOOP_CLASSPATHS"`" org.apache.flink.client.cli.CliFrontend "$@"

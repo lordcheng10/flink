@@ -32,33 +32,41 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Committer implementation for {@link FileSink}.
+ *
+ * <p>This committer is responsible for taking staged part-files, i.e. part-files in "pending"
+ * state, created by the {@link org.apache.flink.connector.file.sink.writer.FileWriter FileWriter}
+ * and commit them, or put them in "finished" state and ready to be consumed by downstream
+ * applications or systems.
  */
 @Internal
 public class FileCommitter implements Committer<FileSinkCommittable> {
-	private final BucketWriter<?, ?> bucketWriter;
 
-	public FileCommitter(BucketWriter<?, ?> bucketWriter) {
-		this.bucketWriter = checkNotNull(bucketWriter);
-	}
+    private final BucketWriter<?, ?> bucketWriter;
 
-	@Override
-	public List<FileSinkCommittable> commit(List<FileSinkCommittable> committables) throws IOException  {
-		for (FileSinkCommittable committable : committables) {
-			if (committable.hasPendingFile()) {
-				// We should always use commitAfterRecovery which contains additional checks.
-				bucketWriter.recoverPendingFile(committable.getPendingFile()).commitAfterRecovery();
-			}
+    public FileCommitter(BucketWriter<?, ?> bucketWriter) {
+        this.bucketWriter = checkNotNull(bucketWriter);
+    }
 
-			if (committable.hasInProgressFileToCleanup()) {
-				bucketWriter.cleanupInProgressFileRecoverable(committable.getInProgressFileToCleanup());
-			}
-		}
+    @Override
+    public List<FileSinkCommittable> commit(List<FileSinkCommittable> committables)
+            throws IOException {
+        for (FileSinkCommittable committable : committables) {
+            if (committable.hasPendingFile()) {
+                // We should always use commitAfterRecovery which contains additional checks.
+                bucketWriter.recoverPendingFile(committable.getPendingFile()).commitAfterRecovery();
+            }
 
-		return Collections.emptyList();
-	}
+            if (committable.hasInProgressFileToCleanup()) {
+                bucketWriter.cleanupInProgressFileRecoverable(
+                        committable.getInProgressFileToCleanup());
+            }
+        }
 
-	@Override
-	public void close() throws Exception {
-		// Do nothing.
-	}
+        return Collections.emptyList();
+    }
+
+    @Override
+    public void close() throws Exception {
+        // Do nothing.
+    }
 }

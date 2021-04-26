@@ -40,67 +40,77 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * Entry point for Mesos session clusters.
+ *
+ * @deprecated Apache Mesos support was deprecated in Flink 1.13 and is subject to removal in the
+ *     future (see FLINK-22352 for further details).
  */
+@Deprecated
 public class MesosSessionClusterEntrypoint extends SessionClusterEntrypoint {
 
-	private MesosConfiguration mesosConfig;
+    private MesosConfiguration mesosConfig;
 
-	private MesosServices mesosServices;
+    private MesosServices mesosServices;
 
-	public MesosSessionClusterEntrypoint(Configuration config) {
-		super(config);
-	}
+    public MesosSessionClusterEntrypoint(Configuration config) {
+        super(config);
+    }
 
-	@Override
-	protected void initializeServices(Configuration config, PluginManager pluginManager) throws Exception {
-		super.initializeServices(config, pluginManager);
+    @Override
+    protected void initializeServices(Configuration config, PluginManager pluginManager)
+            throws Exception {
+        super.initializeServices(config, pluginManager);
 
-		final String hostname = config.getString(JobManagerOptions.ADDRESS);
+        final String hostname = config.getString(JobManagerOptions.ADDRESS);
 
-		// Mesos configuration
-		mesosConfig = MesosUtils.createMesosSchedulerConfiguration(config, hostname);
+        // Mesos configuration
+        mesosConfig = MesosUtils.createMesosSchedulerConfiguration(config, hostname);
 
-		// services
-		mesosServices = MesosServicesUtils.createMesosServices(config, hostname);
-	}
+        // services
+        mesosServices = MesosServicesUtils.createMesosServices(config, hostname);
+    }
 
-	@Override
-	protected CompletableFuture<Void> stopClusterServices(boolean cleanupHaData) {
-		final CompletableFuture<Void> serviceShutDownFuture = super.stopClusterServices(cleanupHaData);
+    @Override
+    protected CompletableFuture<Void> stopClusterServices(boolean cleanupHaData) {
+        final CompletableFuture<Void> serviceShutDownFuture =
+                super.stopClusterServices(cleanupHaData);
 
-		return FutureUtils.runAfterwards(
-			serviceShutDownFuture,
-			() -> {
-				if (mesosServices != null) {
-					mesosServices.close(cleanupHaData);
-				}
-			});
-	}
+        return FutureUtils.runAfterwards(
+                serviceShutDownFuture,
+                () -> {
+                    if (mesosServices != null) {
+                        mesosServices.close(cleanupHaData);
+                    }
+                });
+    }
 
-	@Override
-	protected DefaultDispatcherResourceManagerComponentFactory createDispatcherResourceManagerComponentFactory(Configuration configuration) {
-		return DefaultDispatcherResourceManagerComponentFactory.createSessionComponentFactory(
-			new MesosResourceManagerFactory(
-				mesosServices,
-				mesosConfig));
-	}
+    @Override
+    protected DefaultDispatcherResourceManagerComponentFactory
+            createDispatcherResourceManagerComponentFactory(Configuration configuration) {
+        return DefaultDispatcherResourceManagerComponentFactory.createSessionComponentFactory(
+                new MesosResourceManagerFactory(mesosServices, mesosConfig));
+    }
 
-	public static void main(String[] args) {
-		// startup checks and logging
-		EnvironmentInformation.logEnvironmentInfo(LOG, MesosSessionClusterEntrypoint.class.getSimpleName(), args);
-		SignalHandler.register(LOG);
-		JvmShutdownSafeguard.installAsShutdownHook(LOG);
+    public static void main(String[] args) {
+        // startup checks and logging
+        EnvironmentInformation.logEnvironmentInfo(
+                LOG, MesosSessionClusterEntrypoint.class.getSimpleName(), args);
+        SignalHandler.register(LOG);
+        JvmShutdownSafeguard.installAsShutdownHook(LOG);
 
-		// load configuration incl. dynamic properties
-		Configuration dynamicProperties = ClusterEntrypointUtils.parseParametersOrExit(
-			args,
-			new DynamicParametersConfigurationParserFactory(),
-			MesosSessionClusterEntrypoint.class);
-		Configuration configuration = MesosUtils.loadConfiguration(dynamicProperties, LOG);
+        LOG.warn(
+                "Mesos support was deprecated in Flink 1.13 and is subject to removal in the future (see FLINK-22352 for further details).");
 
-		MesosSessionClusterEntrypoint clusterEntrypoint = new MesosSessionClusterEntrypoint(configuration);
+        // load configuration incl. dynamic properties
+        Configuration dynamicProperties =
+                ClusterEntrypointUtils.parseParametersOrExit(
+                        args,
+                        new DynamicParametersConfigurationParserFactory(),
+                        MesosSessionClusterEntrypoint.class);
+        Configuration configuration = MesosUtils.loadConfiguration(dynamicProperties, LOG);
 
-		ClusterEntrypoint.runClusterEntrypoint(clusterEntrypoint);
-	}
+        MesosSessionClusterEntrypoint clusterEntrypoint =
+                new MesosSessionClusterEntrypoint(configuration);
 
+        ClusterEntrypoint.runClusterEntrypoint(clusterEntrypoint);
+    }
 }

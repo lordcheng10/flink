@@ -50,11 +50,6 @@ function sort_msg {
     echo "${sorted[*]}"
 }
 
-function test_clean_up {
-    stop_cluster
-    stop_kafka_cluster
-}
-
 CURRENT_DIR=`cd "$(dirname "$0")" && pwd -P`
 source "${CURRENT_DIR}"/common.sh
 source "${CURRENT_DIR}"/kafka_sql_common.sh \
@@ -62,6 +57,12 @@ source "${CURRENT_DIR}"/kafka_sql_common.sh \
   ${CONFLUENT_VERSION} \
   ${CONFLUENT_MAJOR_VERSION} \
   ${KAFKA_SQL_VERSION}
+
+function test_clean_up {
+    stop_cluster
+    stop_kafka_cluster
+}
+on_exit test_clean_up
 
 cp -r "${FLINK_DIR}/conf" "${TEST_DATA_DIR}/conf"
 
@@ -86,6 +87,14 @@ rm -rf dist
 
 python setup.py sdist
 
+pushd apache-flink-libraries
+
+python setup.py sdist
+
+pip install dist/*
+
+popd
+
 pip install dist/*
 
 cd dev
@@ -99,7 +108,6 @@ deactivate
 cd "${CURRENT_DIR}"
 
 start_cluster
-on_exit test_clean_up
 
 echo "Test PyFlink Table job:"
 
@@ -198,7 +206,7 @@ EOF
 
 SQL_STATEMENT="insert into sink select add_one(a) from (VALUES (1), (2), (3)) as source (a)"
 
-JOB_ID=$($FLINK_DIR/bin/sql-client.sh embedded \
+JOB_ID=$($FLINK_DIR/bin/sql-client.sh \
   --environment $SQL_CONF \
   -pyfs "${FLINK_PYTHON_TEST_DIR}/python/add_one.py" \
   -pyreq "${REQUIREMENTS_PATH}" \
@@ -221,14 +229,14 @@ start_kafka_cluster
 create_kafka_topic 1 1 timer-stream-source
 create_kafka_topic 1 1 timer-stream-sink
 
-PAYMENT_MSGS='{"createTime": "2020-10-26 10:30:13", "orderId": 1603679414, "payAmount": 83685.44904332698, "payPlatform": 0, "provinceId": 3}
-{"createTime": "2020-10-26 10:30:26", "orderId": 1603679427, "payAmount": 30092.50657757042, "payPlatform": 0, "provinceId": 1}
-{"createTime": "2020-10-26 10:30:27", "orderId": 1603679428, "payAmount": 62644.01719293056, "payPlatform": 0, "provinceId": 6}
-{"createTime": "2020-10-26 10:30:28", "orderId": 1603679429, "payAmount": 6449.806795118451, "payPlatform": 0, "provinceId": 2}
-{"createTime": "2020-10-26 10:31:31", "orderId": 1603679492, "payAmount": 41108.36128417494, "payPlatform": 0, "provinceId": 0}
-{"createTime": "2020-10-26 10:31:32", "orderId": 1603679493, "payAmount": 64882.44233197067, "payPlatform": 0, "provinceId": 4}
-{"createTime": "2020-10-26 10:32:01", "orderId": 1603679522, "payAmount": 81648.80712644062, "payPlatform": 0, "provinceId": 3}
-{"createTime": "2020-10-26 10:32:02", "orderId": 1603679523, "payAmount": 81861.73063103345, "payPlatform": 0, "provinceId": 4}'
+PAYMENT_MSGS='{"createTime": 1603679413000, "orderId": 1603679414, "payAmount": 83685.44904332698, "payPlatform": 0, "provinceId": 3}
+{"createTime": 1603679426000, "orderId": 1603679427, "payAmount": 30092.50657757042, "payPlatform": 0, "provinceId": 1}
+{"createTime": 1603679427000, "orderId": 1603679428, "payAmount": 62644.01719293056, "payPlatform": 0, "provinceId": 6}
+{"createTime": 1603679428000, "orderId": 1603679429, "payAmount": 6449.806795118451, "payPlatform": 0, "provinceId": 2}
+{"createTime": 1603679491000, "orderId": 1603679492, "payAmount": 41108.36128417494, "payPlatform": 0, "provinceId": 0}
+{"createTime": 1603679492000, "orderId": 1603679493, "payAmount": 64882.44233197067, "payPlatform": 0, "provinceId": 4}
+{"createTime": 1603679521000, "orderId": 1603679522, "payAmount": 81648.80712644062, "payPlatform": 0, "provinceId": 3}
+{"createTime": 1603679522000, "orderId": 1603679523, "payAmount": 81861.73063103345, "payPlatform": 0, "provinceId": 4}'
 
 function send_msg_to_kafka {
     while read line
@@ -236,6 +244,23 @@ function send_msg_to_kafka {
 	    send_messages_to_kafka "$line" "timer-stream-source"
         sleep 1
     done <<< "$1"
+}
+
+function read_msg_from_kafka {
+    $KAFKA_DIR/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --from-beginning \
+    --max-messages $1 \
+    --topic $2 \
+    --consumer-property group.id=$3 --timeout-ms 90000 2> /dev/null
+}
+
+function cat_jm_logs {
+     local log_file_name=${3:-standalonesession}
+     cat $FLINK_LOG_DIR/*$log_file_name*.log
+}
+
+function cat_tm_logs {
+	local logfile="$FLINK_LOG_DIR/flink*taskexecutor*log"
+	cat ${logfile}
 }
 
 send_msg_to_kafka "${PAYMENT_MSGS[*]}"
@@ -254,19 +279,19 @@ JOB_ID=`echo "${JOB_ID}" | sed 's/.* //g'`
 wait_job_running ${JOB_ID}
 
 echo "Reading kafka messages..."
-READ_MSG=$(read_messages_from_kafka 16 timer-stream-sink pyflink-e2e-test-timer)
+READ_MSG=$(read_msg_from_kafka 16 timer-stream-sink pyflink-e2e-test-timer)
 
 # We use env.execute_async() to submit the job, cancel it after fetched results.
 cancel_job "${JOB_ID}"
 
-EXPECTED_MSG='Current orderId: 1603679414 payAmount: 83685.44904332698
-Current orderId: 1603679427 payAmount: 30092.50657757042
-Current orderId: 1603679428 payAmount: 62644.01719293056
-Current orderId: 1603679429 payAmount: 6449.806795118451
-Current orderId: 1603679492 payAmount: 41108.36128417494
-Current orderId: 1603679493 payAmount: 64882.44233197067
-Current orderId: 1603679522 payAmount: 81648.80712644062
-Current orderId: 1603679523 payAmount: 81861.73063103345
+EXPECTED_MSG='Current key: 1603679414, orderId: 1603679414, payAmount: 83685.44904332698, timestamp: 1603679413000
+Current key: 1603679427, orderId: 1603679427, payAmount: 30092.50657757042, timestamp: 1603679426000
+Current key: 1603679428, orderId: 1603679428, payAmount: 62644.01719293056, timestamp: 1603679427000
+Current key: 1603679429, orderId: 1603679429, payAmount: 6449.806795118451, timestamp: 1603679428000
+Current key: 1603679492, orderId: 1603679492, payAmount: 41108.36128417494, timestamp: 1603679491000
+Current key: 1603679493, orderId: 1603679493, payAmount: 64882.44233197067, timestamp: 1603679492000
+Current key: 1603679522, orderId: 1603679522, payAmount: 81648.80712644062, timestamp: 1603679521000
+Current key: 1603679523, orderId: 1603679523, payAmount: 81861.73063103345, timestamp: 1603679522000
 On timer timestamp: -9223372036854774308
 On timer timestamp: -9223372036854774308
 On timer timestamp: -9223372036854774308
@@ -283,55 +308,9 @@ if [[ "${EXPECTED_MSG[*]}" != "${SORTED_READ_MSG[*]}" ]]; then
     echo "Output from Flink program does not match expected output."
     echo -e "EXPECTED Output: --${EXPECTED_MSG[*]}--"
     echo -e "ACTUAL: --${SORTED_READ_MSG[*]}--"
+    jm_log=$(cat_jm_logs)
+    echo "JobManager logs: " ${jm_log}
+    tm_log=$(cat_tm_logs)
+    echo "TaskManager logs: " ${tm_log}
     exit 1
-fi
-
-stop_cluster
-
-# These tests are known to fail on JDK11. See FLINK-13719
-if [[ ${PROFILE} != *"jdk11"* ]]; then
-    cd "${CURRENT_DIR}/../"
-    source "${CURRENT_DIR}"/common_yarn_docker.sh
-    # test submitting on yarn
-    start_hadoop_cluster_and_prepare_flink
-
-    # copy test files
-    docker cp "${FLINK_PYTHON_DIR}/dev/lint-python.sh" master:/tmp/
-    docker cp "${FLINK_PYTHON_TEST_DIR}/target/PythonUdfSqlJobExample.jar" master:/tmp/
-    docker cp "${FLINK_PYTHON_TEST_DIR}/python/add_one.py" master:/tmp/
-    docker cp "${REQUIREMENTS_PATH}" master:/tmp/
-    docker cp "${FLINK_PYTHON_TEST_DIR}/python/python_job.py" master:/tmp/
-    PYFLINK_PACKAGE_FILE=$(basename "${FLINK_PYTHON_DIR}"/dist/apache-flink-*.tar.gz)
-    docker cp "${FLINK_PYTHON_DIR}/dist/${PYFLINK_PACKAGE_FILE}" master:/tmp/
-
-    # prepare environment
-    docker exec master bash -c "
-    /tmp/lint-python.sh -s miniconda
-    source /tmp/.conda/bin/activate
-    pip install /tmp/${PYFLINK_PACKAGE_FILE}
-    conda install -y -q zip=3.0
-    rm -rf /tmp/.conda/pkgs
-    cd /tmp
-    zip -q -r /tmp/venv.zip .conda
-    echo \"taskmanager.memory.task.off-heap.size: 100m\" >> \"/home/hadoop-user/$FLINK_DIRNAME/conf/flink-conf.yaml\"
-    "
-
-    docker exec master bash -c "export HADOOP_CLASSPATH=\`hadoop classpath\` && \
-        export PYFLINK_CLIENT_EXECUTABLE=/tmp/.conda/bin/python && \
-        /home/hadoop-user/$FLINK_DIRNAME/bin/flink run -m yarn-cluster -ytm 1500 -yjm 1000 \
-        -pyfs /tmp/add_one.py \
-        -pyreq /tmp/requirements.txt \
-        -pyarch /tmp/venv.zip \
-        -pyexec venv.zip/.conda/bin/python \
-        /tmp/PythonUdfSqlJobExample.jar"
-
-    docker exec master bash -c "export HADOOP_CLASSPATH=\`hadoop classpath\` && \
-        export PYFLINK_CLIENT_EXECUTABLE=/tmp/.conda/bin/python && \
-        /home/hadoop-user/$FLINK_DIRNAME/bin/flink run -m yarn-cluster -ytm 1500 -yjm 1000 \
-        -pyfs /tmp/add_one.py \
-        -pyreq /tmp/requirements.txt \
-        -pyarch /tmp/venv.zip \
-        -pyexec venv.zip/.conda/bin/python \
-        -py /tmp/python_job.py \
-        pipeline.jars file:/tmp/PythonUdfSqlJobExample.jar"
 fi

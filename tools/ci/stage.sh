@@ -27,6 +27,8 @@ STAGE_KAFKA_GELLY="kafka/gelly"
 STAGE_TESTS="tests"
 STAGE_MISC="misc"
 STAGE_CLEANUP="cleanup"
+STAGE_LEGACY_SLOT_MANAGEMENT="legacy_slot_management"
+STAGE_FINEGRAINED_RESOURCE_MANAGEMENT="finegrained_resource_management"
 
 MODULES_CORE="\
 flink-annotations,\
@@ -72,7 +74,6 @@ flink-filesystems/flink-oss-fs-hadoop,\
 flink-filesystems/flink-s3-fs-base,\
 flink-filesystems/flink-s3-fs-hadoop,\
 flink-filesystems/flink-s3-fs-presto,\
-flink-filesystems/flink-swift-fs-hadoop,\
 flink-fs-tests,\
 flink-formats,\
 flink-formats/flink-avro-confluent-registry,\
@@ -122,6 +123,10 @@ flink-connectors/flink-sql-connector-kafka,"
 MODULES_TESTS="\
 flink-tests"
 
+MODULES_LEGACY_SLOT_MANAGEMENT=${MODULES_CORE},${MODULES_TESTS}
+
+MODULES_FINEGRAINED_RESOURCE_MANAGEMENT=${MODULES_CORE},${MODULES_TESTS}
+
 # we can only build the Scala Shell when building for Scala 2.11
 if [[ $PROFILE == *"scala-2.11"* ]]; then
     MODULES_CORE="$MODULES_CORE,flink-scala-shell"
@@ -158,6 +163,12 @@ function get_compile_modules_for_stage() {
             # compile everything for PyFlink.
             echo ""
         ;;
+        (${STAGE_LEGACY_SLOT_MANAGEMENT})
+            echo "-pl $MODULES_LEGACY_SLOT_MANAGEMENT -am"
+        ;;
+        (${STAGE_FINEGRAINED_RESOURCE_MANAGEMENT})
+            echo "-pl $MODULES_FINEGRAINED_RESOURCE_MANAGEMENT -am"
+        ;;
     esac
 }
 
@@ -176,6 +187,8 @@ function get_test_modules_for_stage() {
     local negated_connectors=\!${MODULES_CONNECTORS//,/,\!}
     local negated_tests=\!${MODULES_TESTS//,/,\!}
     local modules_misc="$negated_core,$negated_libraries,$negated_blink_planner,$negated_connectors,$negated_kafka_gelly,$negated_tests"
+    local modules_legacy_slot_management=$MODULES_LEGACY_SLOT_MANAGEMENT
+    local modules_finegrained_resource_management=$MODULES_FINEGRAINED_RESOURCE_MANAGEMENT
 
     case ${stage} in
         (${STAGE_CORE})
@@ -198,6 +211,12 @@ function get_test_modules_for_stage() {
         ;;
         (${STAGE_MISC})
             echo "-pl $modules_misc"
+        ;;
+        (${STAGE_LEGACY_SLOT_MANAGEMENT})
+            echo "-pl $modules_legacy_slot_management"
+        ;;
+        (${STAGE_FINEGRAINED_RESOURCE_MANAGEMENT})
+            echo "-pl $modules_finegrained_resource_management"
         ;;
     esac
 }

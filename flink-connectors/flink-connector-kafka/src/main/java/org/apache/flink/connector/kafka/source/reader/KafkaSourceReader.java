@@ -35,86 +35,133 @@ import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
 
-/**
- * The source reader for Kafka partitions.
- */
+/** The source reader for Kafka partitions. */
 public class KafkaSourceReader<T>
-		extends SingleThreadMultiplexSourceReaderBase<Tuple3<T, Long, Long>, T, KafkaPartitionSplit, KafkaPartitionSplitState> {
-	private static final Logger LOG = LoggerFactory.getLogger(KafkaSourceReader.class);
-	private final SortedMap<Long, Map<TopicPartition, OffsetAndMetadata>> offsetsToCommit;
+        extends SingleThreadMultiplexSourceReaderBase<
+                Tuple3<T, Long, Long>, T, KafkaPartitionSplit, KafkaPartitionSplitState> {
+    private static final Logger LOG = LoggerFactory.getLogger(KafkaSourceReader.class);
+    // These maps need to be concurrent because it will be accessed by both the main thread
+    // and the split fetcher thread in the callback.
+    private final SortedMap<Long, Map<TopicPartition, OffsetAndMetadata>> offsetsToCommit;
+    private final ConcurrentMap<TopicPartition, OffsetAndMetadata> offsetsOfFinishedSplits;
 
-	public KafkaSourceReader(
-			FutureCompletingBlockingQueue<RecordsWithSplitIds<Tuple3<T, Long, Long>>> elementsQueue,
-			Supplier<KafkaPartitionSplitReader<T>> splitReaderSupplier,
-			RecordEmitter<Tuple3<T, Long, Long>, T, KafkaPartitionSplitState> recordEmitter,
-			Configuration config,
-			SourceReaderContext context) {
-		super(
-			elementsQueue,
-			new KafkaSourceFetcherManager<>(elementsQueue, splitReaderSupplier::get),
-			recordEmitter,
-			config,
-			context);
-		this.offsetsToCommit = new TreeMap<>();
-	}
+    public KafkaSourceReader(
+            FutureCompletingBlockingQueue<RecordsWithSplitIds<Tuple3<T, Long, Long>>> elementsQueue,
+            Supplier<KafkaPartitionSplitReader<T>> splitReaderSupplier,
+            RecordEmitter<Tuple3<T, Long, Long>, T, KafkaPartitionSplitState> recordEmitter,
+            Configuration config,
+            SourceReaderContext context) {
+        super(
+                elementsQueue,
+                new KafkaSourceFetcherManager<>(elementsQueue, splitReaderSupplier::get),
+                recordEmitter,
+                config,
+                context);
+        this.offsetsToCommit = Collections.synchronizedSortedMap(new TreeMap<>());
+        this.offsetsOfFinishedSplits = new ConcurrentHashMap<>();
+    }
 
-	@Override
-	protected void onSplitFinished(Collection<String> finishedSplitIds) {
+    @Override
+    protected void onSplitFinished(Map<String, KafkaPartitionSplitState> finishedSplitIds) {
+        finishedSplitIds.forEach(
+                (ignored, splitState) -> {
+                    if (splitState.getCurrentOffset() >= 0) {
+                        offsetsOfFinishedSplits.put(
+                                splitState.getTopicPartition(),
+                                new OffsetAndMetadata(splitState.getCurrentOffset()));
+                    }
+                });
+    }
 
-	}
+    @Override
+    public List<KafkaPartitionSplit> snapshotState(long checkpointId) {
+        List<KafkaPartitionSplit> splits = super.snapshotState(checkpointId);
+        if (splits.isEmpty() && offsetsOfFinishedSplits.isEmpty()) {
+            offsetsToCommit.put(checkpointId, Collections.emptyMap());
+        } else {
+            Map<TopicPartition, OffsetAndMetadata> offsetsMap =
+                    offsetsToCommit.computeIfAbsent(checkpointId, id -> new HashMap<>());
+            // Put the offsets of the active splits.
+            for (KafkaPartitionSplit split : splits) {
+                // If the checkpoint is triggered before the partition starting offsets
+                // is retrieved, do not commit the offsets for those partitions.
+                if (split.getStartingOffset() >= 0) {
+                    offsetsMap.put(
+                            split.getTopicPartition(),
+                            new OffsetAndMetadata(split.getStartingOffset()));
+                }
+            }
+            // Put offsets of all the finished splits.
+            offsetsMap.putAll(offsetsOfFinishedSplits);
+        }
+        return splits;
+    }
 
-	@Override
-	public List<KafkaPartitionSplit> snapshotState(long checkpointId) {
-		List<KafkaPartitionSplit> splits = super.snapshotState(checkpointId);
-		for (KafkaPartitionSplit split : splits) {
-			offsetsToCommit
-				.compute(checkpointId, (ignoredKey, ignoredValue) -> new HashMap<>())
-				.put(
-					split.getTopicPartition(),
-					new OffsetAndMetadata(split.getStartingOffset(), null));
-		}
-		return splits;
-	}
+    @Override
+    public void notifyCheckpointComplete(long checkpointId) throws Exception {
+        LOG.debug("Committing offsets for checkpoint {}", checkpointId);
+        ((KafkaSourceFetcherManager<T>) splitFetcherManager)
+                .commitOffsets(
+                        offsetsToCommit.get(checkpointId),
+                        (ignored, e) -> {
+                            // The offset commit here is needed by the external monitoring. It won't
+                            // break Flink job's correctness if we fail to commit the offset here.
+                            if (e != null) {
+                                LOG.warn(
+                                        "Failed to commit consumer offsets for checkpoint {}",
+                                        checkpointId,
+                                        e);
+                            } else {
+                                LOG.debug(
+                                        "Successfully committed offsets for checkpoint {}",
+                                        checkpointId);
+                                // If the finished topic partition has been committed, we remove it
+                                // from the offsets of the finished splits map.
+                                Map<TopicPartition, OffsetAndMetadata> committedPartitions =
+                                        offsetsToCommit.get(checkpointId);
+                                offsetsOfFinishedSplits
+                                        .entrySet()
+                                        .removeIf(
+                                                entry ->
+                                                        committedPartitions.containsKey(
+                                                                entry.getKey()));
+                                while (!offsetsToCommit.isEmpty()
+                                        && offsetsToCommit.firstKey() <= checkpointId) {
+                                    offsetsToCommit.remove(offsetsToCommit.firstKey());
+                                }
+                            }
+                        });
+    }
 
-	@Override
-	public void notifyCheckpointComplete(long checkpointId) throws Exception {
-		((KafkaSourceFetcherManager<T>) splitFetcherManager).commitOffsets(
-				offsetsToCommit.get(checkpointId),
-				(ignored, e) -> {
-					if (e != null) {
-						LOG.warn(
-							"Failed to commit consumer offsets for checkpoint {}",
-							checkpointId);
-					} else {
-						while (!offsetsToCommit.isEmpty() && offsetsToCommit.firstKey() <= checkpointId) {
-							offsetsToCommit.remove(offsetsToCommit.firstKey());
-						}
-					}
-				});
-	}
+    @Override
+    protected KafkaPartitionSplitState initializedState(KafkaPartitionSplit split) {
+        return new KafkaPartitionSplitState(split);
+    }
 
-	@Override
-	protected KafkaPartitionSplitState initializedState(KafkaPartitionSplit split) {
-		return new KafkaPartitionSplitState(split);
-	}
+    @Override
+    protected KafkaPartitionSplit toSplitType(String splitId, KafkaPartitionSplitState splitState) {
+        return splitState.toKafkaPartitionSplit();
+    }
 
-	@Override
-	protected KafkaPartitionSplit toSplitType(String splitId, KafkaPartitionSplitState splitState) {
-		return splitState.toKafkaPartitionSplit();
-	}
+    // ------------------------
 
-	// ------------------------
+    @VisibleForTesting
+    SortedMap<Long, Map<TopicPartition, OffsetAndMetadata>> getOffsetsToCommit() {
+        return offsetsToCommit;
+    }
 
-	@VisibleForTesting
-	SortedMap<Long, Map<TopicPartition, OffsetAndMetadata>> getOffsetsToCommit() {
-		return offsetsToCommit;
-	}
+    @VisibleForTesting
+    int getNumAliveFetchers() {
+        return splitFetcherManager.getNumAliveFetchers();
+    }
 }

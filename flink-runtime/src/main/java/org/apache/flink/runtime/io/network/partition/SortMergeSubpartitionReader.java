@@ -19,173 +19,213 @@
 package org.apache.flink.runtime.io.network.partition;
 
 import org.apache.flink.core.memory.MemorySegment;
-import org.apache.flink.core.memory.MemorySegmentFactory;
 import org.apache.flink.runtime.io.network.buffer.Buffer;
 import org.apache.flink.runtime.io.network.buffer.BufferRecycler;
 import org.apache.flink.runtime.io.network.partition.ResultSubpartition.BufferAndBacklog;
-import org.apache.flink.util.ExceptionUtils;
-import org.apache.flink.util.IOUtils;
 
 import javax.annotation.Nullable;
+import javax.annotation.concurrent.GuardedBy;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
 
+import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
-import static org.apache.flink.util.Preconditions.checkState;
 
-/**
- * Subpartition data reader for {@link SortMergeResultPartition}.
- */
-public class SortMergeSubpartitionReader implements ResultSubpartitionView, BufferRecycler {
+/** Subpartition data reader for {@link SortMergeResultPartition}. */
+class SortMergeSubpartitionReader
+        implements ResultSubpartitionView, Comparable<SortMergeSubpartitionReader> {
 
-	private static final int NUM_READ_BUFFERS = 2;
+    private final Object lock = new Object();
 
-	/** Target {@link SortMergeResultPartition} to read data from. */
-	private final SortMergeResultPartition partition;
+    /** A {@link CompletableFuture} to be completed when this subpartition reader is released. */
+    private final CompletableFuture<?> releaseFuture = new CompletableFuture<>();
 
-	/** Listener to notify when data is available. */
-	private final BufferAvailabilityListener availabilityListener;
+    /** Listener to notify when data is available. */
+    private final BufferAvailabilityListener availabilityListener;
 
-	/** Unmanaged memory used as read buffers. */
-	private final Queue<MemorySegment> readBuffers = new ArrayDeque<>();
+    /** Buffers already read which can be consumed by netty thread. */
+    @GuardedBy("lock")
+    private final Queue<Buffer> buffersRead = new ArrayDeque<>();
 
-	/** Buffers read by the file reader. */
-	private final Queue<Buffer> buffersRead = new ArrayDeque<>();
+    /** File reader used to read buffer from. */
+    private final PartitionedFileReader fileReader;
 
-	/** File reader used to read buffer from. */
-	private final PartitionedFileReader fileReader;
+    /** Number of remaining non-event buffers in the buffer queue. */
+    @GuardedBy("lock")
+    private int dataBufferBacklog;
 
-	/** Number of remaining non-event buffers to read. */
-	private int dataBufferBacklog;
+    /** Whether this reader is released or not. */
+    @GuardedBy("lock")
+    private boolean isReleased;
 
-	/** Whether this reader is released or not. */
-	private boolean isReleased;
+    /** Cause of failure which should be propagated to the consumer. */
+    @GuardedBy("lock")
+    private Throwable failureCause;
 
-	/** Sequence number of the next buffer to be sent to the consumer. */
-	private int sequenceNumber;
+    /** Sequence number of the next buffer to be sent to the consumer. */
+    private int sequenceNumber;
 
-	public SortMergeSubpartitionReader(
-			int subpartitionIndex,
-			int dataBufferBacklog,
-			int bufferSize,
-			SortMergeResultPartition partition,
-			BufferAvailabilityListener listener,
-			PartitionedFile partitionedFile) throws IOException {
-		this.partition = checkNotNull(partition);
-		this.availabilityListener = checkNotNull(listener);
-		this.dataBufferBacklog = dataBufferBacklog;
+    SortMergeSubpartitionReader(
+            BufferAvailabilityListener listener, PartitionedFileReader fileReader) {
+        this.availabilityListener = checkNotNull(listener);
+        this.fileReader = checkNotNull(fileReader);
+    }
 
-		// allocate two pieces of unmanaged segments for data reading
-		for (int i = 0; i < NUM_READ_BUFFERS; i++) {
-			this.readBuffers.add(MemorySegmentFactory.allocateUnpooledOffHeapMemory(bufferSize, null));
-		}
+    @Nullable
+    @Override
+    public BufferAndBacklog getNextBuffer() {
+        synchronized (lock) {
+            Buffer buffer = buffersRead.poll();
+            if (buffer == null) {
+                return null;
+            }
 
-		this.fileReader = new PartitionedFileReader(partitionedFile, subpartitionIndex);
-		try {
-			readBuffers();
-		} catch (Throwable throwable) {
-			// ensure that the file reader is closed when any exception occurs
-			IOUtils.closeQuietly(fileReader);
-			throw throwable;
-		}
-	}
+            if (buffer.isBuffer()) {
+                --dataBufferBacklog;
+            }
 
-	@Nullable
-	@Override
-	public BufferAndBacklog getNextBuffer() {
-		checkState(!isReleased, "Reader is already released.");
+            Buffer lookAhead = buffersRead.peek();
+            return BufferAndBacklog.fromBufferAndLookahead(
+                    buffer,
+                    lookAhead == null ? Buffer.DataType.NONE : lookAhead.getDataType(),
+                    dataBufferBacklog,
+                    sequenceNumber++);
+        }
+    }
 
-		Buffer buffer = buffersRead.poll();
-		if (buffer == null) {
-			return null;
-		}
+    private void addBuffer(Buffer buffer) {
+        boolean notifyAvailable;
+        synchronized (lock) {
+            if (isReleased) {
+                buffer.recycleBuffer();
+                throw new IllegalStateException("Subpartition reader has been already released.");
+            }
 
-		if (buffer.isBuffer()) {
-			--dataBufferBacklog;
-		}
+            notifyAvailable = buffersRead.isEmpty();
 
-		final Buffer lookAhead = buffersRead.peek();
+            buffersRead.add(buffer);
+            if (buffer.isBuffer()) {
+                ++dataBufferBacklog;
+            }
+        }
 
-		return BufferAndBacklog.fromBufferAndLookahead(
-				buffer,
-				lookAhead == null ? Buffer.DataType.NONE : lookAhead.getDataType(),
-				dataBufferBacklog,
-				sequenceNumber++);
-	}
+        if (notifyAvailable) {
+            notifyDataAvailable();
+        }
+    }
 
-	void readBuffers() throws IOException {
-		// we do not need to recycle the allocated segment here if any exception occurs
-		// for this subpartition reader will be released so no resource will be leaked
-		MemorySegment segment;
-		while ((segment = readBuffers.poll()) != null) {
-			Buffer buffer = fileReader.readBuffer(segment, this);
-			if (buffer == null) {
-				readBuffers.add(segment);
-				break;
-			}
-			buffersRead.add(buffer);
-		}
-	}
+    /** This method is called by the IO thread of {@link SortMergeResultPartitionReadScheduler}. */
+    boolean readBuffers(Queue<MemorySegment> buffers, BufferRecycler recycler) throws IOException {
+        while (!buffers.isEmpty()) {
+            MemorySegment segment = buffers.poll();
 
-	@Override
-	public void notifyDataAvailable() {
-		if (!buffersRead.isEmpty()) {
-			availabilityListener.notifyDataAvailable();
-		}
-	}
+            Buffer buffer;
+            try {
+                if ((buffer = fileReader.readCurrentRegion(segment, recycler)) == null) {
+                    buffers.add(segment);
+                    break;
+                }
+            } catch (Throwable throwable) {
+                buffers.add(segment);
+                throw throwable;
+            }
+            addBuffer(buffer);
+        }
+        return fileReader.hasRemaining();
+    }
 
-	@Override
-	public void recycle(MemorySegment segment) {
-		readBuffers.add(segment);
+    CompletableFuture<?> getReleaseFuture() {
+        return releaseFuture;
+    }
 
-		// notify data available if the reader is unavailable currently
-		if (!isReleased && readBuffers.size() == NUM_READ_BUFFERS) {
-			try {
-				readBuffers();
-			} catch (IOException exception) {
-				ExceptionUtils.rethrow(exception, "Failed to read next buffer.");
-			}
-			notifyDataAvailable();
-		}
-	}
+    void fail(Throwable throwable) {
+        checkArgument(throwable != null, "Must be not null.");
 
-	@Override
-	public void releaseAllResources() {
-		isReleased = true;
+        releaseInternal(throwable);
+        // notify the netty thread which will propagate the error to the consumer task
+        notifyDataAvailable();
+    }
 
-		IOUtils.closeQuietly(fileReader);
-		partition.releaseReader(this);
-	}
+    @Override
+    public void notifyDataAvailable() {
+        availabilityListener.notifyDataAvailable();
+    }
 
-	@Override
-	public boolean isReleased() {
-		return isReleased;
-	}
+    @Override
+    public int compareTo(SortMergeSubpartitionReader that) {
+        long thisPriority = fileReader.getPriority();
+        long thatPriority = that.fileReader.getPriority();
 
-	@Override
-	public void resumeConsumption() {
-		throw new UnsupportedOperationException("Method should never be called.");
-	}
+        if (thisPriority == thatPriority) {
+            return 0;
+        }
+        return thisPriority > thatPriority ? 1 : -1;
+    }
 
-	@Override
-	public Throwable getFailureCause() {
-		// we can never throw an error after this was created
-		return null;
-	}
+    @Override
+    public void releaseAllResources() {
+        releaseInternal(null);
+    }
 
-	@Override
-	public boolean isAvailable(int numCreditsAvailable) {
-		if (numCreditsAvailable > 0) {
-			return !buffersRead.isEmpty();
-		}
+    private void releaseInternal(@Nullable Throwable throwable) {
+        synchronized (lock) {
+            if (isReleased) {
+                return;
+            }
 
-		return !buffersRead.isEmpty() && !buffersRead.peek().isBuffer();
-	}
+            isReleased = true;
+            if (failureCause == null) {
+                failureCause = throwable;
+            }
 
-	@Override
-	public int unsynchronizedGetNumberOfQueuedBuffers() {
-		return 0;
-	}
+            for (Buffer buffer : buffersRead) {
+                buffer.recycleBuffer();
+            }
+            buffersRead.clear();
+        }
+
+        releaseFuture.complete(null);
+    }
+
+    @Override
+    public boolean isReleased() {
+        synchronized (lock) {
+            return isReleased;
+        }
+    }
+
+    @Override
+    public void resumeConsumption() {
+        throw new UnsupportedOperationException("Method should never be called.");
+    }
+
+    @Override
+    public Throwable getFailureCause() {
+        synchronized (lock) {
+            return failureCause;
+        }
+    }
+
+    @Override
+    public boolean isAvailable(int numCreditsAvailable) {
+        synchronized (lock) {
+            if (isReleased) {
+                return true;
+            }
+
+            if (buffersRead.isEmpty()) {
+                return false;
+            }
+
+            return numCreditsAvailable > 0 || !buffersRead.peek().isBuffer();
+        }
+    }
+
+    @Override
+    public int unsynchronizedGetNumberOfQueuedBuffers() {
+        return Math.max(0, buffersRead.size());
+    }
 }

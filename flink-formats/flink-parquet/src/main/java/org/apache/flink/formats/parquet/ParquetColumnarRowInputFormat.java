@@ -42,132 +42,146 @@ import java.util.stream.Collectors;
 import static org.apache.flink.formats.parquet.vector.ParquetSplitReaderUtil.createVectorFromConstant;
 
 /**
- * A {@link ParquetVectorizedInputFormat} to provide {@link RowData} iterator.
- * Using {@link ColumnarRowData} to provide a row view of column batch.
+ * A {@link ParquetVectorizedInputFormat} to provide {@link RowData} iterator. Using {@link
+ * ColumnarRowData} to provide a row view of column batch.
  */
-public class ParquetColumnarRowInputFormat<SplitT extends FileSourceSplit> extends
-		ParquetVectorizedInputFormat<RowData, SplitT> {
+public class ParquetColumnarRowInputFormat<SplitT extends FileSourceSplit>
+        extends ParquetVectorizedInputFormat<RowData, SplitT> {
 
-	private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 1L;
 
-	private final RowType producedType;
+    private final RowType producedType;
 
-	/**
-	 * Constructor to create parquet format without extra fields.
-	 */
-	public ParquetColumnarRowInputFormat(
-			Configuration hadoopConfig,
-			RowType projectedType,
-			int batchSize,
-			boolean isUtcTimestamp,
-			boolean isCaseSensitive) {
-		this(
-				hadoopConfig,
-				projectedType,
-				projectedType,
-				ColumnBatchFactory.withoutExtraFields(),
-				batchSize,
-				isUtcTimestamp,
-				isCaseSensitive);
-	}
+    /** Constructor to create parquet format without extra fields. */
+    public ParquetColumnarRowInputFormat(
+            Configuration hadoopConfig,
+            RowType projectedType,
+            int batchSize,
+            boolean isUtcTimestamp,
+            boolean isCaseSensitive) {
+        this(
+                hadoopConfig,
+                projectedType,
+                projectedType,
+                ColumnBatchFactory.withoutExtraFields(),
+                batchSize,
+                isUtcTimestamp,
+                isCaseSensitive);
+    }
 
-	/**
-	 * Constructor to create parquet format with extra fields created by {@link ColumnBatchFactory}.
-	 *
-	 * @param projectedType the projected row type for parquet format, excludes extra fields.
-	 * @param producedType the produced row type for this input format, includes extra fields.
-	 * @param batchFactory factory for creating column batch, can cram in extra fields.
-	 */
-	public ParquetColumnarRowInputFormat(
-			Configuration hadoopConfig,
-			RowType projectedType,
-			RowType producedType,
-			ColumnBatchFactory<SplitT> batchFactory,
-			int batchSize,
-			boolean isUtcTimestamp,
-			boolean isCaseSensitive) {
-		super(
-				new SerializableConfiguration(hadoopConfig),
-				projectedType,
-				batchFactory,
-				batchSize,
-				isUtcTimestamp,
-				isCaseSensitive);
-		this.producedType = producedType;
-	}
+    /**
+     * Constructor to create parquet format with extra fields created by {@link ColumnBatchFactory}.
+     *
+     * @param projectedType the projected row type for parquet format, excludes extra fields.
+     * @param producedType the produced row type for this input format, includes extra fields.
+     * @param batchFactory factory for creating column batch, can cram in extra fields.
+     */
+    public ParquetColumnarRowInputFormat(
+            Configuration hadoopConfig,
+            RowType projectedType,
+            RowType producedType,
+            ColumnBatchFactory<SplitT> batchFactory,
+            int batchSize,
+            boolean isUtcTimestamp,
+            boolean isCaseSensitive) {
+        super(
+                new SerializableConfiguration(hadoopConfig),
+                projectedType,
+                batchFactory,
+                batchSize,
+                isUtcTimestamp,
+                isCaseSensitive);
+        this.producedType = producedType;
+    }
 
-	@Override
-	protected ParquetReaderBatch<RowData> createReaderBatch(
-			WritableColumnVector[] writableVectors,
-			VectorizedColumnBatch columnarBatch,
-			Pool.Recycler<ParquetReaderBatch<RowData>> recycler) {
-		return new ColumnarRowReaderBatch(writableVectors, columnarBatch, recycler);
-	}
+    @Override
+    protected int numBatchesToCirculate(org.apache.flink.configuration.Configuration config) {
+        // In a VectorizedColumnBatch, the dictionary will be lazied deserialized.
+        // If there are multiple batches at the same time, there may be thread safety problems,
+        // because the deserialization of the dictionary depends on some internal structures.
+        // We need set numBatchesToCirculate to 1.
+        return 1;
+    }
 
-	@Override
-	public TypeInformation<RowData> getProducedType() {
-		return InternalTypeInfo.of(producedType);
-	}
+    @Override
+    protected ParquetReaderBatch<RowData> createReaderBatch(
+            WritableColumnVector[] writableVectors,
+            VectorizedColumnBatch columnarBatch,
+            Pool.Recycler<ParquetReaderBatch<RowData>> recycler) {
+        return new ColumnarRowReaderBatch(writableVectors, columnarBatch, recycler);
+    }
 
-	private static class ColumnarRowReaderBatch extends ParquetReaderBatch<RowData> {
+    @Override
+    public TypeInformation<RowData> getProducedType() {
+        return InternalTypeInfo.of(producedType);
+    }
 
-		private final ColumnarRowIterator result;
+    private static class ColumnarRowReaderBatch extends ParquetReaderBatch<RowData> {
 
-		private ColumnarRowReaderBatch(
-				WritableColumnVector[] writableVectors,
-				VectorizedColumnBatch columnarBatch,
-				Pool.Recycler<ParquetReaderBatch<RowData>> recycler) {
-			super(writableVectors, columnarBatch, recycler);
-			this.result = new ColumnarRowIterator(new ColumnarRowData(columnarBatch), this::recycle);
-		}
+        private final ColumnarRowIterator result;
 
-		@Override
-		public RecordIterator<RowData> convertAndGetIterator(long rowsReturned) {
-			result.set(columnarBatch.getNumRows(), rowsReturned);
-			return result;
-		}
-	}
+        private ColumnarRowReaderBatch(
+                WritableColumnVector[] writableVectors,
+                VectorizedColumnBatch columnarBatch,
+                Pool.Recycler<ParquetReaderBatch<RowData>> recycler) {
+            super(writableVectors, columnarBatch, recycler);
+            this.result =
+                    new ColumnarRowIterator(new ColumnarRowData(columnarBatch), this::recycle);
+        }
 
-	/**
-	 * Create a partitioned {@link ParquetColumnarRowInputFormat}, the partition columns can be
-	 * generated by {@link Path}.
-	 */
-	public static <SplitT extends FileSourceSplit> ParquetColumnarRowInputFormat<SplitT> createPartitionedFormat(
-			Configuration hadoopConfig,
-			RowType producedRowType,
-			List<String> partitionKeys,
-			PartitionFieldExtractor<SplitT> extractor,
-			int batchSize,
-			boolean isUtcTimestamp,
-			boolean isCaseSensitive) {
-		RowType projectedRowType = new RowType(producedRowType.getFields().stream()
-				.filter(field -> !partitionKeys.contains(field.getName()))
-				.collect(Collectors.toList()));
-		List<String> projectedNames = projectedRowType.getFieldNames();
+        @Override
+        public RecordIterator<RowData> convertAndGetIterator(long rowsReturned) {
+            result.set(columnarBatch.getNumRows(), rowsReturned);
+            return result;
+        }
+    }
 
-		ColumnBatchFactory<SplitT> factory = (SplitT split, ColumnVector[] parquetVectors) -> {
-			// create and initialize the row batch
-			ColumnVector[] vectors = new ColumnVector[producedRowType.getFieldCount()];
-			for (int i = 0; i < vectors.length; i++) {
-				RowType.RowField field = producedRowType.getFields().get(i);
+    /**
+     * Create a partitioned {@link ParquetColumnarRowInputFormat}, the partition columns can be
+     * generated by {@link Path}.
+     */
+    public static <SplitT extends FileSourceSplit>
+            ParquetColumnarRowInputFormat<SplitT> createPartitionedFormat(
+                    Configuration hadoopConfig,
+                    RowType producedRowType,
+                    List<String> partitionKeys,
+                    PartitionFieldExtractor<SplitT> extractor,
+                    int batchSize,
+                    boolean isUtcTimestamp,
+                    boolean isCaseSensitive) {
+        RowType projectedRowType =
+                new RowType(
+                        producedRowType.getFields().stream()
+                                .filter(field -> !partitionKeys.contains(field.getName()))
+                                .collect(Collectors.toList()));
+        List<String> projectedNames = projectedRowType.getFieldNames();
 
-				vectors[i] = partitionKeys.contains(field.getName()) ?
-						createVectorFromConstant(
-								field.getType(),
-								extractor.extract(split, field.getName(), field.getType()),
-								batchSize) :
-						parquetVectors[projectedNames.indexOf(field.getName())];
-			}
-			return new VectorizedColumnBatch(vectors);
-		};
+        ColumnBatchFactory<SplitT> factory =
+                (SplitT split, ColumnVector[] parquetVectors) -> {
+                    // create and initialize the row batch
+                    ColumnVector[] vectors = new ColumnVector[producedRowType.getFieldCount()];
+                    for (int i = 0; i < vectors.length; i++) {
+                        RowType.RowField field = producedRowType.getFields().get(i);
 
-		return new ParquetColumnarRowInputFormat<>(
-				hadoopConfig,
-				projectedRowType,
-				producedRowType,
-				factory,
-				batchSize,
-				isUtcTimestamp,
-				isCaseSensitive);
-	}
+                        vectors[i] =
+                                partitionKeys.contains(field.getName())
+                                        ? createVectorFromConstant(
+                                                field.getType(),
+                                                extractor.extract(
+                                                        split, field.getName(), field.getType()),
+                                                batchSize)
+                                        : parquetVectors[projectedNames.indexOf(field.getName())];
+                    }
+                    return new VectorizedColumnBatch(vectors);
+                };
+
+        return new ParquetColumnarRowInputFormat<>(
+                hadoopConfig,
+                projectedRowType,
+                producedRowType,
+                factory,
+                batchSize,
+                isUtcTimestamp,
+                isCaseSensitive);
+    }
 }

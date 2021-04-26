@@ -35,7 +35,6 @@ import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.utils.DataTypeUtils;
-import org.apache.flink.util.Preconditions;
 
 import org.apache.kafka.common.header.Header;
 
@@ -51,327 +50,388 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.stream.Stream;
 
-/**
- * A version-agnostic Kafka {@link DynamicTableSink}.
- */
+import static org.apache.flink.util.Preconditions.checkNotNull;
+
+/** A version-agnostic Kafka {@link DynamicTableSink}. */
 @Internal
 public class KafkaDynamicSink implements DynamicTableSink, SupportsWritingMetadata {
 
-	// --------------------------------------------------------------------------------------------
-	// Mutable attributes
-	// --------------------------------------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------
+    // Mutable attributes
+    // --------------------------------------------------------------------------------------------
 
-	/** Metadata that is appended at the end of a physical sink row. */
-	protected List<String> metadataKeys;
+    /** Metadata that is appended at the end of a physical sink row. */
+    protected List<String> metadataKeys;
 
-	// --------------------------------------------------------------------------------------------
-	// Format attributes
-	// --------------------------------------------------------------------------------------------
+    // --------------------------------------------------------------------------------------------
+    // Format attributes
+    // --------------------------------------------------------------------------------------------
 
-	/** Data type to configure the formats. */
-	protected final DataType physicalDataType;
+    /** Data type of consumed data type. */
+    protected DataType consumedDataType;
 
-	/** Optional format for encoding keys to Kafka. */
-	protected final @Nullable EncodingFormat<SerializationSchema<RowData>> keyEncodingFormat;
+    /** Data type to configure the formats. */
+    protected final DataType physicalDataType;
 
-	/** Format for encoding values to Kafka. */
-	protected final EncodingFormat<SerializationSchema<RowData>> valueEncodingFormat;
+    /** Optional format for encoding keys to Kafka. */
+    protected final @Nullable EncodingFormat<SerializationSchema<RowData>> keyEncodingFormat;
 
-	/** Indices that determine the key fields and the source position in the consumed row. */
-	protected final int[] keyProjection;
+    /** Format for encoding values to Kafka. */
+    protected final EncodingFormat<SerializationSchema<RowData>> valueEncodingFormat;
 
-	/** Indices that determine the value fields and the source position in the consumed row. */
-	protected final int[] valueProjection;
+    /** Indices that determine the key fields and the source position in the consumed row. */
+    protected final int[] keyProjection;
 
-	/** Prefix that needs to be removed from fields when constructing the physical data type. */
-	protected final @Nullable String keyPrefix;
+    /** Indices that determine the value fields and the source position in the consumed row. */
+    protected final int[] valueProjection;
 
-	// --------------------------------------------------------------------------------------------
-	// Kafka-specific attributes
-	// --------------------------------------------------------------------------------------------
+    /** Prefix that needs to be removed from fields when constructing the physical data type. */
+    protected final @Nullable String keyPrefix;
 
-	/** The Kafka topic to write to. */
-	protected final String topic;
+    // --------------------------------------------------------------------------------------------
+    // Kafka-specific attributes
+    // --------------------------------------------------------------------------------------------
 
-	/** Properties for the Kafka producer. */
-	protected final Properties properties;
+    /** The Kafka topic to write to. */
+    protected final String topic;
 
-	/** Partitioner to select Kafka partition for each item. */
-	protected final @Nullable FlinkKafkaPartitioner<RowData> partitioner;
+    /** Properties for the Kafka producer. */
+    protected final Properties properties;
 
-	/** Sink commit semantic. */
-	protected final KafkaSinkSemantic semantic;
+    /** Partitioner to select Kafka partition for each item. */
+    protected final @Nullable FlinkKafkaPartitioner<RowData> partitioner;
 
-	/** Flag to determine sink mode. In upsert mode sink transforms the delete/update-before message to tombstone message. */
-	protected final boolean upsertMode;
+    /** Sink commit semantic. */
+    protected final KafkaSinkSemantic semantic;
 
-	/** Parallelism of the physical Kafka producer. **/
-	protected final @Nullable Integer parallelism;
+    /**
+     * Flag to determine sink mode. In upsert mode sink transforms the delete/update-before message
+     * to tombstone message.
+     */
+    protected final boolean upsertMode;
 
-	public KafkaDynamicSink(
-			DataType physicalDataType,
-			@Nullable EncodingFormat<SerializationSchema<RowData>> keyEncodingFormat,
-			EncodingFormat<SerializationSchema<RowData>> valueEncodingFormat,
-			int[] keyProjection,
-			int[] valueProjection,
-			@Nullable String keyPrefix,
-			String topic,
-			Properties properties,
-			@Nullable FlinkKafkaPartitioner<RowData> partitioner,
-			KafkaSinkSemantic semantic,
-			boolean upsertMode,
-			@Nullable Integer parallelism) {
-		// Format attributes
-		this.physicalDataType = Preconditions.checkNotNull(physicalDataType, "Physical data type must not be null.");
-		this.keyEncodingFormat = keyEncodingFormat;
-		this.valueEncodingFormat = Preconditions.checkNotNull(valueEncodingFormat, "Value encoding format must not be null.");
-		this.keyProjection = Preconditions.checkNotNull(keyProjection, "Key projection must not be null.");
-		this.valueProjection = Preconditions.checkNotNull(valueProjection, "Value projection must not be null.");
-		this.keyPrefix = keyPrefix;
-		// Mutable attributes
-		this.metadataKeys = Collections.emptyList();
-		// Kafka-specific attributes
-		this.topic = Preconditions.checkNotNull(topic, "Topic must not be null.");
-		this.properties = Preconditions.checkNotNull(properties, "Properties must not be null.");
-		this.partitioner = partitioner;
-		this.semantic = Preconditions.checkNotNull(semantic, "Semantic must not be null.");
-		this.upsertMode = upsertMode;
-		this.parallelism = parallelism;
-	}
+    /** Sink buffer flush config which only supported in upsert mode now. */
+    protected final SinkBufferFlushMode flushMode;
 
-	@Override
-	public ChangelogMode getChangelogMode(ChangelogMode requestedMode) {
-		return valueEncodingFormat.getChangelogMode();
-	}
+    /** Parallelism of the physical Kafka producer. * */
+    protected final @Nullable Integer parallelism;
 
-	@Override
-	public SinkRuntimeProvider getSinkRuntimeProvider(Context context) {
-		final SerializationSchema<RowData> keySerialization =
-				createSerialization(context, keyEncodingFormat, keyProjection, keyPrefix);
+    public KafkaDynamicSink(
+            DataType consumedDataType,
+            DataType physicalDataType,
+            @Nullable EncodingFormat<SerializationSchema<RowData>> keyEncodingFormat,
+            EncodingFormat<SerializationSchema<RowData>> valueEncodingFormat,
+            int[] keyProjection,
+            int[] valueProjection,
+            @Nullable String keyPrefix,
+            String topic,
+            Properties properties,
+            @Nullable FlinkKafkaPartitioner<RowData> partitioner,
+            KafkaSinkSemantic semantic,
+            boolean upsertMode,
+            SinkBufferFlushMode flushMode,
+            @Nullable Integer parallelism) {
+        // Format attributes
+        this.consumedDataType =
+                checkNotNull(consumedDataType, "Consumed data type must not be null.");
+        this.physicalDataType =
+                checkNotNull(physicalDataType, "Physical data type must not be null.");
+        this.keyEncodingFormat = keyEncodingFormat;
+        this.valueEncodingFormat =
+                checkNotNull(valueEncodingFormat, "Value encoding format must not be null.");
+        this.keyProjection = checkNotNull(keyProjection, "Key projection must not be null.");
+        this.valueProjection = checkNotNull(valueProjection, "Value projection must not be null.");
+        this.keyPrefix = keyPrefix;
+        // Mutable attributes
+        this.metadataKeys = Collections.emptyList();
+        // Kafka-specific attributes
+        this.topic = checkNotNull(topic, "Topic must not be null.");
+        this.properties = checkNotNull(properties, "Properties must not be null.");
+        this.partitioner = partitioner;
+        this.semantic = checkNotNull(semantic, "Semantic must not be null.");
+        this.upsertMode = upsertMode;
+        this.flushMode = checkNotNull(flushMode);
+        if (flushMode.isEnabled() && !upsertMode) {
+            throw new IllegalArgumentException(
+                    "Sink buffer flush is only supported in upsert-kafka.");
+        }
+        this.parallelism = parallelism;
+    }
 
-		final SerializationSchema<RowData> valueSerialization =
-				createSerialization(context, valueEncodingFormat, valueProjection, null);
+    @Override
+    public ChangelogMode getChangelogMode(ChangelogMode requestedMode) {
+        return valueEncodingFormat.getChangelogMode();
+    }
 
-		final FlinkKafkaProducer<RowData> kafkaProducer =
-				createKafkaProducer(keySerialization, valueSerialization);
+    @Override
+    public SinkRuntimeProvider getSinkRuntimeProvider(Context context) {
+        final SerializationSchema<RowData> keySerialization =
+                createSerialization(context, keyEncodingFormat, keyProjection, keyPrefix);
 
-		return SinkFunctionProvider.of(kafkaProducer, parallelism);
-	}
+        final SerializationSchema<RowData> valueSerialization =
+                createSerialization(context, valueEncodingFormat, valueProjection, null);
 
-	@Override
-	public Map<String, DataType> listWritableMetadata() {
-		final Map<String, DataType> metadataMap = new LinkedHashMap<>();
-		Stream.of(WritableMetadata.values()).forEachOrdered(m -> metadataMap.put(m.key, m.dataType));
-		return metadataMap;
-	}
+        final FlinkKafkaProducer<RowData> kafkaProducer =
+                createKafkaProducer(keySerialization, valueSerialization);
 
-	@Override
-	public void applyWritableMetadata(List<String> metadataKeys, DataType consumedDataType) {
-		this.metadataKeys = metadataKeys;
-	}
+        if (flushMode.isEnabled() && upsertMode) {
+            BufferedUpsertSinkFunction buffedSinkFunction =
+                    new BufferedUpsertSinkFunction(
+                            kafkaProducer,
+                            physicalDataType,
+                            keyProjection,
+                            context.createTypeInformation(consumedDataType),
+                            flushMode);
+            return SinkFunctionProvider.of(buffedSinkFunction, parallelism);
+        } else {
+            return SinkFunctionProvider.of(kafkaProducer, parallelism);
+        }
+    }
 
-	@Override
-	public DynamicTableSink copy() {
-		final KafkaDynamicSink copy = new KafkaDynamicSink(
-				physicalDataType,
-				keyEncodingFormat,
-				valueEncodingFormat,
-				keyProjection,
-				valueProjection,
-				keyPrefix,
-				topic,
-				properties,
-				partitioner,
-				semantic,
-				upsertMode,
-				parallelism);
-		copy.metadataKeys = metadataKeys;
-		return copy;
-	}
+    @Override
+    public Map<String, DataType> listWritableMetadata() {
+        final Map<String, DataType> metadataMap = new LinkedHashMap<>();
+        Stream.of(WritableMetadata.values())
+                .forEachOrdered(m -> metadataMap.put(m.key, m.dataType));
+        return metadataMap;
+    }
 
-	@Override
-	public String asSummaryString() {
-		return "Kafka table sink";
-	}
+    @Override
+    public void applyWritableMetadata(List<String> metadataKeys, DataType consumedDataType) {
+        this.metadataKeys = metadataKeys;
+        this.consumedDataType = consumedDataType;
+    }
 
-	@Override
-	public boolean equals(Object o) {
-		if (this == o) {
-			return true;
-		}
-		if (o == null || getClass() != o.getClass()) {
-			return false;
-		}
-		final KafkaDynamicSink that = (KafkaDynamicSink) o;
-		return Objects.equals(metadataKeys, that.metadataKeys) &&
-			Objects.equals(physicalDataType, that.physicalDataType) &&
-			Objects.equals(keyEncodingFormat, that.keyEncodingFormat) &&
-			Objects.equals(valueEncodingFormat, that.valueEncodingFormat) &&
-			Arrays.equals(keyProjection, that.keyProjection) &&
-			Arrays.equals(valueProjection, that.valueProjection) &&
-			Objects.equals(keyPrefix, that.keyPrefix) &&
-			Objects.equals(topic, that.topic) &&
-			Objects.equals(properties, that.properties) &&
-			Objects.equals(partitioner, that.partitioner) &&
-			Objects.equals(semantic, that.semantic) &&
-			Objects.equals(upsertMode, that.upsertMode) &&
-			Objects.equals(parallelism, that.parallelism);
-	}
+    @Override
+    public DynamicTableSink copy() {
+        final KafkaDynamicSink copy =
+                new KafkaDynamicSink(
+                        consumedDataType,
+                        physicalDataType,
+                        keyEncodingFormat,
+                        valueEncodingFormat,
+                        keyProjection,
+                        valueProjection,
+                        keyPrefix,
+                        topic,
+                        properties,
+                        partitioner,
+                        semantic,
+                        upsertMode,
+                        flushMode,
+                        parallelism);
+        copy.metadataKeys = metadataKeys;
+        return copy;
+    }
 
-	@Override
-	public int hashCode() {
-		return Objects.hash(
-			metadataKeys,
-			physicalDataType,
-			keyEncodingFormat,
-			valueEncodingFormat,
-			keyProjection,
-			valueProjection,
-			keyPrefix,
-			topic,
-			properties,
-			partitioner,
-			semantic,
-			upsertMode,
-			parallelism);
-	}
+    @Override
+    public String asSummaryString() {
+        return "Kafka table sink";
+    }
 
-	// --------------------------------------------------------------------------------------------
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        final KafkaDynamicSink that = (KafkaDynamicSink) o;
+        return Objects.equals(metadataKeys, that.metadataKeys)
+                && Objects.equals(consumedDataType, that.consumedDataType)
+                && Objects.equals(physicalDataType, that.physicalDataType)
+                && Objects.equals(keyEncodingFormat, that.keyEncodingFormat)
+                && Objects.equals(valueEncodingFormat, that.valueEncodingFormat)
+                && Arrays.equals(keyProjection, that.keyProjection)
+                && Arrays.equals(valueProjection, that.valueProjection)
+                && Objects.equals(keyPrefix, that.keyPrefix)
+                && Objects.equals(topic, that.topic)
+                && Objects.equals(properties, that.properties)
+                && Objects.equals(partitioner, that.partitioner)
+                && Objects.equals(semantic, that.semantic)
+                && Objects.equals(upsertMode, that.upsertMode)
+                && Objects.equals(flushMode, that.flushMode)
+                && Objects.equals(parallelism, that.parallelism);
+    }
 
-	protected FlinkKafkaProducer<RowData> createKafkaProducer(
-			SerializationSchema<RowData> keySerialization,
-			SerializationSchema<RowData> valueSerialization) {
-		final List<LogicalType> physicalChildren = physicalDataType.getLogicalType().getChildren();
+    @Override
+    public int hashCode() {
+        return Objects.hash(
+                metadataKeys,
+                consumedDataType,
+                physicalDataType,
+                keyEncodingFormat,
+                valueEncodingFormat,
+                keyProjection,
+                valueProjection,
+                keyPrefix,
+                topic,
+                properties,
+                partitioner,
+                semantic,
+                upsertMode,
+                flushMode,
+                parallelism);
+    }
 
-		final RowData.FieldGetter[] keyFieldGetters = Arrays.stream(keyProjection)
-				.mapToObj(targetField -> RowData.createFieldGetter(physicalChildren.get(targetField), targetField))
-				.toArray(RowData.FieldGetter[]::new);
+    // --------------------------------------------------------------------------------------------
 
-		final RowData.FieldGetter[] valueFieldGetters = Arrays.stream(valueProjection)
-				.mapToObj(targetField -> RowData.createFieldGetter(physicalChildren.get(targetField), targetField))
-				.toArray(RowData.FieldGetter[]::new);
+    protected FlinkKafkaProducer<RowData> createKafkaProducer(
+            SerializationSchema<RowData> keySerialization,
+            SerializationSchema<RowData> valueSerialization) {
+        final List<LogicalType> physicalChildren = physicalDataType.getLogicalType().getChildren();
 
-		// determine the positions of metadata in the consumed row
-		final int[] metadataPositions = Stream.of(WritableMetadata.values())
-				.mapToInt(m -> {
-					final int pos = metadataKeys.indexOf(m.key);
-					if (pos < 0) {
-						return -1;
-					}
-					return physicalChildren.size() + pos;
-				})
-				.toArray();
+        final RowData.FieldGetter[] keyFieldGetters =
+                Arrays.stream(keyProjection)
+                        .mapToObj(
+                                targetField ->
+                                        RowData.createFieldGetter(
+                                                physicalChildren.get(targetField), targetField))
+                        .toArray(RowData.FieldGetter[]::new);
 
-		// check if metadata is used at all
-		final boolean hasMetadata = metadataKeys.size() > 0;
+        final RowData.FieldGetter[] valueFieldGetters =
+                Arrays.stream(valueProjection)
+                        .mapToObj(
+                                targetField ->
+                                        RowData.createFieldGetter(
+                                                physicalChildren.get(targetField), targetField))
+                        .toArray(RowData.FieldGetter[]::new);
 
-		final DynamicKafkaSerializationSchema kafkaSerializer = new DynamicKafkaSerializationSchema(
-				topic,
-				partitioner,
-				keySerialization,
-				valueSerialization,
-				keyFieldGetters,
-				valueFieldGetters,
-				hasMetadata,
-				metadataPositions,
-				upsertMode);
+        // determine the positions of metadata in the consumed row
+        final int[] metadataPositions =
+                Stream.of(WritableMetadata.values())
+                        .mapToInt(
+                                m -> {
+                                    final int pos = metadataKeys.indexOf(m.key);
+                                    if (pos < 0) {
+                                        return -1;
+                                    }
+                                    return physicalChildren.size() + pos;
+                                })
+                        .toArray();
 
-		return new FlinkKafkaProducer<>(
-			topic,
-			kafkaSerializer,
-			properties,
-			FlinkKafkaProducer.Semantic.valueOf(semantic.toString()),
-			FlinkKafkaProducer.DEFAULT_KAFKA_PRODUCERS_POOL_SIZE);
-	}
+        // check if metadata is used at all
+        final boolean hasMetadata = metadataKeys.size() > 0;
 
-	private @Nullable SerializationSchema<RowData> createSerialization(
-			DynamicTableSink.Context context,
-			@Nullable EncodingFormat<SerializationSchema<RowData>> format,
-			int[] projection,
-			@Nullable String prefix) {
-		if (format == null) {
-			return null;
-		}
-		DataType physicalFormatDataType = DataTypeUtils.projectRow(this.physicalDataType, projection);
-		if (prefix != null) {
-			physicalFormatDataType = DataTypeUtils.stripRowPrefix(physicalFormatDataType, prefix);
-		}
-		return format.createRuntimeEncoder(context, physicalFormatDataType);
-	}
+        final DynamicKafkaSerializationSchema kafkaSerializer =
+                new DynamicKafkaSerializationSchema(
+                        topic,
+                        partitioner,
+                        keySerialization,
+                        valueSerialization,
+                        keyFieldGetters,
+                        valueFieldGetters,
+                        hasMetadata,
+                        metadataPositions,
+                        upsertMode);
 
-	// --------------------------------------------------------------------------------------------
-	// Metadata handling
-	// --------------------------------------------------------------------------------------------
+        return new FlinkKafkaProducer<>(
+                topic,
+                kafkaSerializer,
+                properties,
+                FlinkKafkaProducer.Semantic.valueOf(semantic.toString()),
+                FlinkKafkaProducer.DEFAULT_KAFKA_PRODUCERS_POOL_SIZE);
+    }
 
-	enum WritableMetadata {
+    private @Nullable SerializationSchema<RowData> createSerialization(
+            DynamicTableSink.Context context,
+            @Nullable EncodingFormat<SerializationSchema<RowData>> format,
+            int[] projection,
+            @Nullable String prefix) {
+        if (format == null) {
+            return null;
+        }
+        DataType physicalFormatDataType =
+                DataTypeUtils.projectRow(this.physicalDataType, projection);
+        if (prefix != null) {
+            physicalFormatDataType = DataTypeUtils.stripRowPrefix(physicalFormatDataType, prefix);
+        }
+        return format.createRuntimeEncoder(context, physicalFormatDataType);
+    }
 
-		HEADERS(
-				"headers",
-				// key and value of the map are nullable to make handling easier in queries
-				DataTypes.MAP(DataTypes.STRING().nullable(), DataTypes.BYTES().nullable()).nullable(),
-				(row, pos) -> {
-					if (row.isNullAt(pos)) {
-						return null;
-					}
-					final MapData map = row.getMap(pos);
-					final ArrayData keyArray = map.keyArray();
-					final ArrayData valueArray = map.valueArray();
-					final List<Header> headers = new ArrayList<>();
-					for (int i = 0; i < keyArray.size(); i++) {
-						if (!keyArray.isNullAt(i) && !valueArray.isNullAt(i)) {
-							final String key = keyArray.getString(i).toString();
-							final byte[] value = valueArray.getBinary(i);
-							headers.add(new KafkaHeader(key, value));
-						}
-					}
-					return headers;
-				}
-		),
+    // --------------------------------------------------------------------------------------------
+    // Metadata handling
+    // --------------------------------------------------------------------------------------------
 
-		TIMESTAMP(
-				"timestamp",
-				DataTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE(3).nullable(),
-				(row, pos) -> {
-					if (row.isNullAt(pos)) {
-						return null;
-					}
-					return row.getTimestamp(pos, 3).getMillisecond();
-				});
+    enum WritableMetadata {
+        HEADERS(
+                "headers",
+                // key and value of the map are nullable to make handling easier in queries
+                DataTypes.MAP(DataTypes.STRING().nullable(), DataTypes.BYTES().nullable())
+                        .nullable(),
+                new MetadataConverter() {
+                    private static final long serialVersionUID = 1L;
 
-		final String key;
+                    @Override
+                    public Object read(RowData row, int pos) {
+                        if (row.isNullAt(pos)) {
+                            return null;
+                        }
+                        final MapData map = row.getMap(pos);
+                        final ArrayData keyArray = map.keyArray();
+                        final ArrayData valueArray = map.valueArray();
+                        final List<Header> headers = new ArrayList<>();
+                        for (int i = 0; i < keyArray.size(); i++) {
+                            if (!keyArray.isNullAt(i) && !valueArray.isNullAt(i)) {
+                                final String key = keyArray.getString(i).toString();
+                                final byte[] value = valueArray.getBinary(i);
+                                headers.add(new KafkaHeader(key, value));
+                            }
+                        }
+                        return headers;
+                    }
+                }),
 
-		final DataType dataType;
+        TIMESTAMP(
+                "timestamp",
+                DataTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE(3).nullable(),
+                new MetadataConverter() {
+                    private static final long serialVersionUID = 1L;
 
-		final MetadataConverter converter;
+                    @Override
+                    public Object read(RowData row, int pos) {
+                        if (row.isNullAt(pos)) {
+                            return null;
+                        }
+                        return row.getTimestamp(pos, 3).getMillisecond();
+                    }
+                });
 
-		WritableMetadata(String key, DataType dataType, MetadataConverter converter) {
-			this.key = key;
-			this.dataType = dataType;
-			this.converter = converter;
-		}
-	}
+        final String key;
 
-	// --------------------------------------------------------------------------------------------
+        final DataType dataType;
 
-	private static class KafkaHeader implements Header {
+        final MetadataConverter converter;
 
-		private final String key;
+        WritableMetadata(String key, DataType dataType, MetadataConverter converter) {
+            this.key = key;
+            this.dataType = dataType;
+            this.converter = converter;
+        }
+    }
 
-		private final byte[] value;
+    // --------------------------------------------------------------------------------------------
 
-		KafkaHeader(String key, byte[] value) {
-			this.key = key;
-			this.value = value;
-		}
+    private static class KafkaHeader implements Header {
 
-		@Override
-		public String key() {
-			return key;
-		}
+        private final String key;
 
-		@Override
-		public byte[] value() {
-			return value;
-		}
-	}
+        private final byte[] value;
+
+        KafkaHeader(String key, byte[] value) {
+            this.key = key;
+            this.value = value;
+        }
+
+        @Override
+        public String key() {
+            return key;
+        }
+
+        @Override
+        public byte[] value() {
+            return value;
+        }
+    }
 }

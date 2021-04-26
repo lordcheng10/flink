@@ -18,6 +18,8 @@
 
 package org.apache.flink.table.planner.plan.batch.sql
 
+import org.apache.flink.table.api.config.TableConfigOptions
+import org.apache.flink.table.planner.plan.optimize.RelNodeBlockPlanBuilder
 import org.apache.flink.table.planner.utils._
 
 import org.junit.{Before, Test}
@@ -73,16 +75,48 @@ class TableSourceTest extends TableTestBase {
          |)
          |""".stripMargin
     util.tableEnv.executeSql(ddl3)
+    val ddl4 =
+      s"""
+         |CREATE TABLE NestedItemTable (
+         |  `id` INT,
+         |  `name` STRING,
+         |  `result` ROW<
+         |     `data_arr` ROW<`value` BIGINT> ARRAY,
+         |     `data_map` MAP<STRING, ROW<`value` BIGINT>>>,
+         |  `extra` STRING
+         |  ) WITH (
+         |    'connector' = 'values',
+         |    'nested-projection-supported' = 'true',
+         |    'bounded' = 'true'
+         |)
+         |""".stripMargin
+    util.tableEnv.executeSql(ddl4)
+    util.tableEnv.executeSql(
+      s"""
+         |CREATE TABLE MyTable (
+         |  `a` INT,
+         |  `b` BIGINT,
+         |  `c` STRING
+         |) WITH (
+         |  'connector' = 'values',
+         |  'bounded' = 'true'
+         |)
+         |""".stripMargin)
   }
 
   @Test
   def testSimpleProject(): Unit = {
-    util.verifyPlan("SELECT a, c FROM ProjectableTable")
+    util.verifyExecPlan("SELECT a, c FROM ProjectableTable")
+  }
+
+  @Test
+  def testSimpleProjectWithProctime(): Unit = {
+    util.verifyExecPlan("SELECT a, c, PROCTIME() FROM ProjectableTable")
   }
 
   @Test
   def testProjectWithoutInputRef(): Unit = {
-    util.verifyPlan("SELECT COUNT(1) FROM ProjectableTable")
+    util.verifyExecPlan("SELECT COUNT(1) FROM ProjectableTable")
   }
 
   @Test
@@ -96,7 +130,7 @@ class TableSourceTest extends TableTestBase {
         |    deepNested.nested2.num AS nestedNum
         |FROM NestedTable
       """.stripMargin
-    util.verifyPlan(sqlQuery)
+    util.verifyExecPlan(sqlQuery)
   }
 
   @Test
@@ -108,6 +142,119 @@ class TableSourceTest extends TableTestBase {
         |       deepNested.nested1.`value` + deepNested.nested2.num + metadata_1 as results
         |FROM T
         |""".stripMargin
-    util.verifyPlan(sqlQuery)
+    util.verifyExecPlan(sqlQuery)
+  }
+
+  @Test
+  def testNestedProjectFieldWithITEM(): Unit = {
+    //TODO: always push projection into table source in FLINK-22118
+    util.verifyExecPlan(
+      s"""
+         |SELECT
+         |  `result`.`data_arr`[`id`].`value`,
+         |  `result`.`data_map`['item'].`value`
+         |FROM NestedItemTable
+         |""".stripMargin
+    )
+  }
+
+  @Test
+  def testTableHintWithDifferentOptions(): Unit = {
+    util.tableEnv.getConfig.getConfiguration.setBoolean(
+      TableConfigOptions.TABLE_DYNAMIC_TABLE_OPTIONS_ENABLED, true)
+    util.tableEnv.executeSql(
+      s"""
+         |CREATE TABLE MySink (
+         |  `a` INT,
+         |  `b` BIGINT,
+         |  `c` STRING
+         |) WITH (
+         |  'connector' = 'filesystem',
+         |  'format' = 'testcsv',
+         |  'path' = '/tmp/test'
+         |)
+       """.stripMargin)
+
+    val stmtSet = util.tableEnv.createStatementSet()
+    stmtSet.addInsertSql(
+      """
+        |insert into MySink select a,b,c from MyTable
+        |  /*+ OPTIONS('source.num-element-to-skip'='1') */
+        |""".stripMargin)
+    stmtSet.addInsertSql(
+      """
+        |insert into MySink select a,b,c from MyTable
+        |  /*+ OPTIONS('source.num-element-to-skip'='2') */
+        |""".stripMargin)
+
+    util.verifyExecPlan(stmtSet)
+  }
+
+  @Test
+  def testTableHintWithSameOptions(): Unit = {
+    util.tableEnv.getConfig.getConfiguration.setBoolean(
+      TableConfigOptions.TABLE_DYNAMIC_TABLE_OPTIONS_ENABLED, true)
+    util.tableEnv.executeSql(
+      s"""
+         |CREATE TABLE MySink (
+         |  `a` INT,
+         |  `b` BIGINT,
+         |  `c` STRING
+         |) WITH (
+         |  'connector' = 'filesystem',
+         |  'format' = 'testcsv',
+         |  'path' = '/tmp/test'
+         |)
+       """.stripMargin)
+
+    val stmtSet = util.tableEnv.createStatementSet()
+    stmtSet.addInsertSql(
+      """
+        |insert into MySink select a,b,c from MyTable
+        |  /*+ OPTIONS('source.num-element-to-skip'='1') */
+        |""".stripMargin)
+    stmtSet.addInsertSql(
+      """
+        |insert into MySink select a,b,c from MyTable
+        |  /*+ OPTIONS('source.num-element-to-skip'='1') */
+        |""".stripMargin)
+
+    util.verifyExecPlan(stmtSet)
+  }
+
+  @Test
+  def testTableHintWithDigestReuseForLogicalTableScan(): Unit = {
+    util.tableEnv.getConfig.getConfiguration.setBoolean(
+      TableConfigOptions.TABLE_DYNAMIC_TABLE_OPTIONS_ENABLED, true)
+    util.tableEnv.getConfig.getConfiguration.setBoolean(
+      RelNodeBlockPlanBuilder.TABLE_OPTIMIZER_REUSE_OPTIMIZE_BLOCK_WITH_DIGEST_ENABLED, true)
+    util.tableEnv.executeSql(
+      s"""
+         |CREATE TABLE MySink (
+         |  `a` INT,
+         |  `b` BIGINT,
+         |  `c` STRING
+         |) WITH (
+         |  'connector' = 'filesystem',
+         |  'format' = 'testcsv',
+         |  'path' = '/tmp/test'
+         |)
+       """.stripMargin)
+
+    val stmtSet = util.tableEnv.createStatementSet()
+    stmtSet.addInsertSql(
+      """
+        |insert into MySink
+        |select a,b,c from MyTable /*+ OPTIONS('source.num-element-to-skip'='0') */
+        |union all
+        |select a,b,c from MyTable /*+ OPTIONS('source.num-element-to-skip'='1') */
+        |""".stripMargin)
+    stmtSet.addInsertSql(
+      """
+        |insert into MySink select a,b,c from MyTable
+        |  /*+ OPTIONS('source.num-element-to-skip'='2') */
+        |""".stripMargin)
+
+    util.verifyExecPlan(stmtSet)
   }
 }

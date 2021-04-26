@@ -20,6 +20,7 @@ package org.apache.flink.runtime.io.network.partition;
 
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.core.memory.MemorySegmentFactory;
+import org.apache.flink.runtime.io.disk.BatchShuffleReadBufferPool;
 import org.apache.flink.runtime.io.disk.FileChannelManager;
 import org.apache.flink.runtime.io.disk.FileChannelManagerImpl;
 import org.apache.flink.runtime.io.network.api.EndOfPartitionEvent;
@@ -28,307 +29,443 @@ import org.apache.flink.runtime.io.network.buffer.Buffer;
 import org.apache.flink.runtime.io.network.buffer.BufferPool;
 import org.apache.flink.runtime.io.network.buffer.NetworkBuffer;
 import org.apache.flink.runtime.io.network.buffer.NetworkBufferPool;
+import org.apache.flink.util.TestLogger;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Queue;
 import java.util.Random;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import static org.apache.flink.runtime.io.network.buffer.Buffer.DataType;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
-/**
- * Tests for {@link SortMergeResultPartition}.
- */
-public class SortMergeResultPartitionTest {
+/** Tests for {@link SortMergeResultPartition}. */
+public class SortMergeResultPartitionTest extends TestLogger {
 
-	private static final BufferAvailabilityListener listener = new NoOpBufferAvailablityListener();
+    private static final int bufferSize = 1024;
 
-	private static final int bufferSize = 1024;
+    private static final int totalBuffers = 1000;
 
-	private static final int totalBuffers = 1000;
+    private static final int totalBytes = 32 * 1024 * 1024;
 
-	private FileChannelManager fileChannelManager;
+    private static final int numThreads = 4;
 
-	private NetworkBufferPool globalPool;
+    private final TestBufferAvailabilityListener listener = new TestBufferAvailabilityListener();
 
-	@Rule
-	public final TemporaryFolder tmpFolder = new TemporaryFolder();
+    private FileChannelManager fileChannelManager;
 
-	@Before
-	public void setUp() {
-		fileChannelManager = new FileChannelManagerImpl(
-			new String[] {tmpFolder.getRoot().getPath()}, "testing");
-		globalPool = new NetworkBufferPool(totalBuffers, bufferSize);
-	}
+    private NetworkBufferPool globalPool;
 
-	@After
-	public void shutdown() throws Exception {
-		fileChannelManager.close();
-		globalPool.destroy();
-	}
+    private BatchShuffleReadBufferPool readBufferPool;
 
-	@Test
-	public void testWriteAndRead() throws Exception {
-		int numSubpartitions = 10;
-		int numBuffers = 100;
-		int numRecords = 1000;
-		Random random = new Random();
+    private ExecutorService readIOExecutor;
 
-		BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
-		SortMergeResultPartition partition = createSortMergedPartition(numSubpartitions, bufferPool);
+    @Rule public final TemporaryFolder tmpFolder = new TemporaryFolder();
 
-		Queue<PartitionSortedBufferTest.DataAndType>[] dataWritten = new Queue[numSubpartitions];
-		Queue<Buffer>[] buffersRead = new Queue[numSubpartitions];
-		for (int i = 0; i < numSubpartitions; ++i) {
-			dataWritten[i] = new ArrayDeque<>();
-			buffersRead[i] = new ArrayDeque<>();
-		}
+    @Rule public Timeout timeout = new Timeout(60, TimeUnit.SECONDS);
 
-		int[] numBytesWritten = new int[numSubpartitions];
-		int[] numBytesRead = new int[numSubpartitions];
-		Arrays.fill(numBytesWritten, 0);
-		Arrays.fill(numBytesRead, 0);
+    @Before
+    public void setUp() {
+        fileChannelManager =
+                new FileChannelManagerImpl(new String[] {tmpFolder.getRoot().getPath()}, "testing");
+        globalPool = new NetworkBufferPool(totalBuffers, bufferSize);
+        readBufferPool = new BatchShuffleReadBufferPool(totalBytes, bufferSize);
+        readIOExecutor = Executors.newFixedThreadPool(numThreads);
+    }
 
-		for (int i = 0; i < numRecords; ++i) {
-			byte[] data  = new byte[random.nextInt(2 * bufferSize) + 1];
-			random.nextBytes(data);
-			ByteBuffer record = ByteBuffer.wrap(data);
-			boolean isBroadCast = random.nextBoolean();
+    @After
+    public void shutdown() throws Exception {
+        fileChannelManager.close();
+        globalPool.destroy();
+        readBufferPool.destroy();
+        readIOExecutor.shutdown();
+    }
 
-			if (isBroadCast) {
-				partition.broadcastRecord(record);
-				for (int subpartition = 0; subpartition < numSubpartitions; ++subpartition) {
-					recordDataWritten(
-						record, dataWritten, subpartition, numBytesWritten, DataType.DATA_BUFFER);
-				}
-			} else {
-				int subpartition = random.nextInt(numSubpartitions);
-				partition.emitRecord(record, subpartition);
-				recordDataWritten(
-					record, dataWritten, subpartition, numBytesWritten, DataType.DATA_BUFFER);
-			}
-		}
+    @Test
+    public void testWriteAndRead() throws Exception {
+        int numSubpartitions = 10;
+        int numBuffers = 100;
+        int numRecords = 1000;
+        Random random = new Random();
 
-		partition.finish();
-		partition.close();
-		for (int subpartition = 0; subpartition < numSubpartitions; ++subpartition) {
-			ByteBuffer record = EventSerializer.toSerializedEvent(EndOfPartitionEvent.INSTANCE);
-			recordDataWritten(
-				record, dataWritten, subpartition, numBytesWritten, DataType.EVENT_BUFFER);
-		}
+        BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
+        SortMergeResultPartition partition =
+                createSortMergedPartition(numSubpartitions, bufferPool);
 
-		for (int subpartition = 0; subpartition < numSubpartitions; ++subpartition) {
-			ResultSubpartitionView view = partition.createSubpartitionView(subpartition, listener);
-			while (view.isAvailable(Integer.MAX_VALUE)) {
-				Buffer buffer = view.getNextBuffer().buffer();
-				int numBytes = buffer.readableBytes();
-				numBytesRead[subpartition] += numBytes;
+        Queue<PartitionSortedBufferTest.DataAndType>[] dataWritten = new Queue[numSubpartitions];
+        Queue<Buffer>[] buffersRead = new Queue[numSubpartitions];
+        for (int i = 0; i < numSubpartitions; ++i) {
+            dataWritten[i] = new ArrayDeque<>();
+            buffersRead[i] = new ArrayDeque<>();
+        }
 
-				MemorySegment segment = MemorySegmentFactory.allocateUnpooledSegment(numBytes);
-				segment.put(0, buffer.getNioBufferReadable(), numBytes);
-				buffersRead[subpartition].add(
-					new NetworkBuffer(segment, (buf) -> {}, buffer.getDataType(), numBytes));
-				buffer.recycleBuffer();
-			}
-			view.releaseAllResources();
-		}
+        int[] numBytesWritten = new int[numSubpartitions];
+        int[] numBytesRead = new int[numSubpartitions];
+        Arrays.fill(numBytesWritten, 0);
+        Arrays.fill(numBytesRead, 0);
 
-		PartitionSortedBufferTest.checkWriteReadResult(
-			numSubpartitions, numBytesWritten, numBytesRead, dataWritten, buffersRead);
-	}
+        for (int i = 0; i < numRecords; ++i) {
+            ByteBuffer record = generateRandomData(random.nextInt(2 * bufferSize) + 1, random);
+            boolean isBroadCast = random.nextBoolean();
 
-	private void recordDataWritten(
-			ByteBuffer record,
-			Queue<PartitionSortedBufferTest.DataAndType>[] dataWritten,
-			int subpartition,
-			int[] numBytesWritten,
-			Buffer.DataType dataType) {
-		record.rewind();
-		dataWritten[subpartition].add(
-			new PartitionSortedBufferTest.DataAndType(record, dataType));
-		numBytesWritten[subpartition] += record.remaining();
-	}
+            if (isBroadCast) {
+                partition.broadcastRecord(record);
+                for (int subpartition = 0; subpartition < numSubpartitions; ++subpartition) {
+                    recordDataWritten(
+                            record,
+                            dataWritten,
+                            subpartition,
+                            numBytesWritten,
+                            DataType.DATA_BUFFER);
+                }
+            } else {
+                int subpartition = random.nextInt(numSubpartitions);
+                partition.emitRecord(record, subpartition);
+                recordDataWritten(
+                        record, dataWritten, subpartition, numBytesWritten, DataType.DATA_BUFFER);
+            }
+        }
 
-	@Test
-	public void testWriteLargeRecord() throws Exception {
-		int numBuffers = 100;
-		BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
-		SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+        partition.finish();
+        partition.close();
+        for (int subpartition = 0; subpartition < numSubpartitions; ++subpartition) {
+            ByteBuffer record = EventSerializer.toSerializedEvent(EndOfPartitionEvent.INSTANCE);
+            recordDataWritten(
+                    record, dataWritten, subpartition, numBytesWritten, DataType.EVENT_BUFFER);
+        }
 
-		byte[] dataWritten  = new byte[bufferSize * numBuffers];
-		Random random = new Random();
-		random.nextBytes(dataWritten);
-		ByteBuffer recordWritten = ByteBuffer.wrap(dataWritten);
-		partition.emitRecord(recordWritten, 0);
-		assertEquals(0, bufferPool.bestEffortGetNumOfUsedBuffers());
+        ResultSubpartitionView[] views = createSubpartitionViews(partition, numSubpartitions);
+        readData(
+                views,
+                bufferWithChannel -> {
+                    Buffer buffer = bufferWithChannel.getBuffer();
+                    int subpartition = bufferWithChannel.getChannelIndex();
 
-		partition.finish();
-		partition.close();
+                    int numBytes = buffer.readableBytes();
+                    numBytesRead[subpartition] += numBytes;
 
-		ResultSubpartitionView view = partition.createSubpartitionView(0, listener);
-		ByteBuffer recordRead = ByteBuffer.allocate(bufferSize * numBuffers);
-		while (view.isAvailable(Integer.MAX_VALUE)) {
-			Buffer buffer = view.getNextBuffer().buffer();
-			if (buffer.isBuffer()) {
-				recordRead.put(buffer.getNioBufferReadable());
-			}
-			buffer.recycleBuffer();
-		}
-		view.releaseAllResources();
+                    MemorySegment segment = MemorySegmentFactory.allocateUnpooledSegment(numBytes);
+                    segment.put(0, buffer.getNioBufferReadable(), numBytes);
+                    buffersRead[subpartition].add(
+                            new NetworkBuffer(
+                                    segment, (buf) -> {}, buffer.getDataType(), numBytes));
+                });
+        PartitionSortedBufferTest.checkWriteReadResult(
+                numSubpartitions, numBytesWritten, numBytesRead, dataWritten, buffersRead);
+    }
 
-		recordWritten.rewind();
-		recordRead.flip();
-		assertEquals(recordWritten, recordRead);
-	}
+    private void recordDataWritten(
+            ByteBuffer record,
+            Queue<PartitionSortedBufferTest.DataAndType>[] dataWritten,
+            int subpartition,
+            int[] numBytesWritten,
+            Buffer.DataType dataType) {
+        record.rewind();
+        dataWritten[subpartition].add(new PartitionSortedBufferTest.DataAndType(record, dataType));
+        numBytesWritten[subpartition] += record.remaining();
+    }
 
-	@Test
-	public void testFlush() throws Exception {
-		int numBuffers = 10;
-		BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
-		SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+    private ByteBuffer generateRandomData(int dataSize, Random random) {
+        byte[] dataWritten = new byte[dataSize];
+        random.nextBytes(dataWritten);
+        return ByteBuffer.wrap(dataWritten);
+    }
 
-		partition.emitRecord(ByteBuffer.allocate(bufferSize), 0);
-		partition.emitRecord(ByteBuffer.allocate(bufferSize), 1);
-		assertEquals(3, bufferPool.bestEffortGetNumOfUsedBuffers());
+    private long readData(
+            ResultSubpartitionView[] views, Consumer<BufferWithChannel> bufferProcessor)
+            throws Exception {
+        int dataSize = 0;
+        int numEndOfPartitionEvents = 0;
 
-		partition.flush(0);
-		assertEquals(0, bufferPool.bestEffortGetNumOfUsedBuffers());
+        while (numEndOfPartitionEvents < views.length) {
+            listener.waitForData();
+            for (int subpartition = 0; subpartition < views.length; ++subpartition) {
+                ResultSubpartitionView view = views[subpartition];
+                ResultSubpartition.BufferAndBacklog bufferAndBacklog = view.getNextBuffer();
+                while (bufferAndBacklog != null) {
+                    Buffer buffer = bufferAndBacklog.buffer();
+                    bufferProcessor.accept(new BufferWithChannel(buffer, subpartition));
+                    dataSize += buffer.readableBytes();
+                    buffer.recycleBuffer();
 
-		partition.emitRecord(ByteBuffer.allocate(bufferSize), 2);
-		partition.emitRecord(ByteBuffer.allocate(bufferSize), 3);
-		assertEquals(3, bufferPool.bestEffortGetNumOfUsedBuffers());
+                    if (!buffer.isBuffer()) {
+                        ++numEndOfPartitionEvents;
+                        assertFalse(view.isAvailable(Integer.MAX_VALUE));
+                        view.releaseAllResources();
+                    }
+                    bufferAndBacklog = view.getNextBuffer();
+                }
+            }
+        }
+        return dataSize;
+    }
 
-		partition.flushAll();
-		assertEquals(0, bufferPool.bestEffortGetNumOfUsedBuffers());
+    private ResultSubpartitionView[] createSubpartitionViews(
+            SortMergeResultPartition partition, int numSubpartitions) throws Exception {
+        ResultSubpartitionView[] views = new ResultSubpartitionView[numSubpartitions];
+        for (int subpartition = 0; subpartition < numSubpartitions; ++subpartition) {
+            views[subpartition] = partition.createSubpartitionView(subpartition, listener);
+        }
+        return views;
+    }
 
-		assertNull(partition.getResultFile());
-		partition.finish();
-		assertEquals(3, partition.getResultFile().getNumRegions());
+    @Test
+    public void testWriteLargeRecord() throws Exception {
+        int numBuffers = 100;
+        int numWriteBuffers = numBuffers / 2;
+        BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
+        SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
 
-		partition.close();
-	}
+        ByteBuffer recordWritten = generateRandomData(bufferSize * numBuffers, new Random());
+        partition.emitRecord(recordWritten, 0);
+        assertEquals(numWriteBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
 
-	@Test(expected = IllegalStateException.class)
-	public void testReleaseWhileWriting() throws Exception {
-		int numBuffers = 10;
-		BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
-		SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+        partition.finish();
+        partition.close();
 
-		partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffers - 1)), 0);
-		partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffers - 1)), 1);
+        ResultSubpartitionView view = partition.createSubpartitionView(0, listener);
+        ByteBuffer recordRead = ByteBuffer.allocate(bufferSize * numBuffers);
+        readData(
+                new ResultSubpartitionView[] {view},
+                bufferWithChannel -> {
+                    Buffer buffer = bufferWithChannel.getBuffer();
+                    if (buffer.isBuffer()) {
+                        recordRead.put(buffer.getNioBufferReadable());
+                    }
+                });
+        recordWritten.rewind();
+        recordRead.flip();
+        assertEquals(recordWritten, recordRead);
+    }
 
-		partition.emitRecord(ByteBuffer.allocate(bufferSize), 2);
-		assertNull(partition.getResultFile());
-		assertEquals(2, fileChannelManager.getPaths()[0].list().length);
+    @Test
+    public void testDataBroadcast() throws Exception {
+        int numSubpartitions = 10;
+        int numBuffers = 100;
+        int numRecords = 10000;
 
-		partition.release();
-		try {
-			partition.emitRecord(ByteBuffer.allocate(bufferSize * numBuffers), 2);
-		} catch (IllegalStateException exception) {
-			assertEquals(0, fileChannelManager.getPaths()[0].list().length);
+        BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
+        SortMergeResultPartition partition =
+                createSortMergedPartition(numSubpartitions, bufferPool);
 
-			throw exception;
-		}
+        for (int i = 0; i < numRecords; ++i) {
+            ByteBuffer record = generateRandomData(bufferSize, new Random());
+            partition.broadcastRecord(record);
+        }
+        partition.finish();
+        partition.close();
 
-		fail("Should throw ClosedChannelException.");
-	}
+        int eventSize = EventSerializer.toSerializedEvent(EndOfPartitionEvent.INSTANCE).remaining();
+        long dataSize = numSubpartitions * numRecords * bufferSize + numSubpartitions * eventSize;
+        assertNotNull(partition.getResultFile());
+        assertEquals(2, checkNotNull(fileChannelManager.getPaths()[0].list()).length);
+        for (File file : checkNotNull(fileChannelManager.getPaths()[0].listFiles())) {
+            if (file.getName().endsWith(PartitionedFile.DATA_FILE_SUFFIX)) {
+                assertTrue(file.length() < numSubpartitions * numRecords * bufferSize);
+            }
+        }
 
-	@Test
-	public void testReleaseWhileReading() throws Exception {
-		int numBuffers = 10;
-		BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
-		SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+        ResultSubpartitionView[] views = createSubpartitionViews(partition, numSubpartitions);
+        long dataRead = readData(views, (ignored) -> {});
+        assertEquals(dataSize, dataRead);
+    }
 
-		partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffers - 1)), 0);
-		partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffers - 1)), 1);
-		partition.finish();
-		partition.close();
+    @Test
+    public void testFlush() throws Exception {
+        int numBuffers = 10;
+        int numWriteBuffers = numBuffers / 2;
+        BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
+        SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+        assertEquals(numWriteBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
 
-		assertEquals(2, partition.getResultFile().getNumRegions());
-		assertEquals(2, fileChannelManager.getPaths()[0].list().length);
+        partition.emitRecord(ByteBuffer.allocate(bufferSize), 0);
+        partition.emitRecord(ByteBuffer.allocate(bufferSize), 1);
+        assertEquals(3 + numWriteBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
 
-		ResultSubpartitionView view = partition.createSubpartitionView(0, listener);
-		view.getNextBuffer().buffer().recycleBuffer();
-		partition.release();
+        partition.flush(0);
+        assertEquals(numWriteBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
 
-		assertEquals(2, partition.getResultFile().getNumRegions());
-		assertEquals(2, fileChannelManager.getPaths()[0].list().length);
+        partition.emitRecord(ByteBuffer.allocate(bufferSize), 2);
+        partition.emitRecord(ByteBuffer.allocate(bufferSize), 3);
+        assertEquals(3 + numWriteBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
 
-		while (view.isAvailable(Integer.MAX_VALUE)) {
-			view.getNextBuffer().buffer().recycleBuffer();
-		}
-		view.releaseAllResources();
+        partition.flushAll();
+        assertEquals(numWriteBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
 
-		assertNull(partition.getResultFile());
-		assertEquals(0, fileChannelManager.getPaths()[0].list().length);
-	}
+        assertNull(partition.getResultFile());
+        partition.finish();
+        assertEquals(3, partition.getResultFile().getNumRegions());
 
-	@Test
-	public void testCloseReleasesAllBuffers() throws Exception {
-		int numBuffers = 100;
-		BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
-		SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+        partition.close();
+    }
 
-		partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffers - 1)), 5);
-		assertEquals(numBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
+    @Test(expected = IllegalStateException.class)
+    public void testReleaseWhileWriting() throws Exception {
+        int numBuffers = 10;
+        int numWriteBuffers = numBuffers / 2;
+        int numBuffersForSort = numBuffers - numWriteBuffers;
 
-		partition.close();
-		assertTrue(bufferPool.isDestroyed());
-		assertEquals(totalBuffers, globalPool.getNumberOfAvailableMemorySegments());
-	}
+        BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
+        SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+        assertEquals(numWriteBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
 
-	@Test(expected = IllegalStateException.class)
-	public void testReadUnfinishedPartition() throws Exception {
-		BufferPool bufferPool = globalPool.createBufferPool(10, 10);
-		try {
-			SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
-			partition.createSubpartitionView(0, listener);
-		} finally {
-			bufferPool.lazyDestroy();
-		}
-	}
+        partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffersForSort - 1)), 0);
+        partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffersForSort - 1)), 1);
 
-	@Test(expected = IllegalStateException.class)
-	public void testReadReleasedPartition() throws Exception {
-		BufferPool bufferPool = globalPool.createBufferPool(10, 10);
-		try {
-			SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
-			partition.finish();
-			partition.release();
-			partition.createSubpartitionView(0, listener);
-		} finally {
-			bufferPool.lazyDestroy();
-		}
-	}
+        partition.emitRecord(ByteBuffer.allocate(bufferSize), 2);
+        assertNull(partition.getResultFile());
+        assertEquals(2, fileChannelManager.getPaths()[0].list().length);
 
-	private SortMergeResultPartition createSortMergedPartition(
-			int numSubpartitions,
-			BufferPool bufferPool) throws IOException {
-		SortMergeResultPartition sortMergedResultPartition = new SortMergeResultPartition(
-			"SortMergedResultPartitionTest",
-			0,
-			new ResultPartitionID(),
-			ResultPartitionType.BLOCKING,
-			numSubpartitions,
-			numSubpartitions,
-			bufferSize,
-			new ResultPartitionManager(),
-			fileChannelManager.createChannel().getPath(),
-			null,
-			() -> bufferPool);
-		sortMergedResultPartition.setup();
-		return sortMergedResultPartition;
-	}
+        partition.release();
+        try {
+            partition.emitRecord(ByteBuffer.allocate(bufferSize * numBuffers), 2);
+        } catch (IllegalStateException exception) {
+            assertEquals(0, fileChannelManager.getPaths()[0].list().length);
+
+            throw exception;
+        }
+    }
+
+    @Test
+    public void testRelease() throws Exception {
+        int numBuffers = 10;
+        int numWriteBuffers = numBuffers / 2;
+        int numBuffersForSort = numBuffers - numWriteBuffers;
+
+        BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
+        SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+        assertEquals(numWriteBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
+
+        partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffersForSort - 1)), 0);
+        partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffersForSort - 1)), 1);
+        partition.finish();
+        partition.close();
+
+        assertEquals(3, partition.getResultFile().getNumRegions());
+        assertEquals(2, checkNotNull(fileChannelManager.getPaths()[0].list()).length);
+
+        ResultSubpartitionView view = partition.createSubpartitionView(0, listener);
+        partition.release();
+
+        while (!view.isReleased()) {
+            ResultSubpartition.BufferAndBacklog bufferAndBacklog = view.getNextBuffer();
+            if (bufferAndBacklog != null) {
+                bufferAndBacklog.buffer().recycleBuffer();
+            }
+        }
+
+        // wait util partition file is released
+        while (partition.getResultFile() != null) {
+            Thread.sleep(100);
+        }
+        assertEquals(0, checkNotNull(fileChannelManager.getPaths()[0].list()).length);
+    }
+
+    @Test
+    public void testCloseReleasesAllBuffers() throws Exception {
+        int numBuffers = 100;
+        int numWriteBuffers = numBuffers / 2;
+        int numBuffersForSort = numBuffers - numWriteBuffers;
+
+        BufferPool bufferPool = globalPool.createBufferPool(numBuffers, numBuffers);
+        SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+        assertEquals(numWriteBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
+
+        partition.emitRecord(ByteBuffer.allocate(bufferSize * (numBuffersForSort - 1)), 5);
+        assertEquals(numBuffers, bufferPool.bestEffortGetNumOfUsedBuffers());
+
+        partition.close();
+        assertTrue(bufferPool.isDestroyed());
+        assertEquals(totalBuffers, globalPool.getNumberOfAvailableMemorySegments());
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void testReadUnfinishedPartition() throws Exception {
+        BufferPool bufferPool = globalPool.createBufferPool(10, 10);
+        try {
+            SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+            partition.createSubpartitionView(0, listener);
+        } finally {
+            bufferPool.lazyDestroy();
+        }
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void testReadReleasedPartition() throws Exception {
+        BufferPool bufferPool = globalPool.createBufferPool(10, 10);
+        try {
+            SortMergeResultPartition partition = createSortMergedPartition(10, bufferPool);
+            partition.finish();
+            partition.release();
+            partition.createSubpartitionView(0, listener);
+        } finally {
+            bufferPool.lazyDestroy();
+        }
+    }
+
+    private SortMergeResultPartition createSortMergedPartition(
+            int numSubpartitions, BufferPool bufferPool) throws IOException {
+        return createSortMergedPartition(numSubpartitions, bufferPool, readBufferPool);
+    }
+
+    private SortMergeResultPartition createSortMergedPartition(
+            int numSubpartitions, BufferPool bufferPool, BatchShuffleReadBufferPool readBufferPool)
+            throws IOException {
+        SortMergeResultPartition sortMergedResultPartition =
+                new SortMergeResultPartition(
+                        "SortMergedResultPartitionTest",
+                        0,
+                        new ResultPartitionID(),
+                        ResultPartitionType.BLOCKING,
+                        numSubpartitions,
+                        numSubpartitions,
+                        readBufferPool,
+                        readIOExecutor,
+                        new ResultPartitionManager(),
+                        fileChannelManager.createChannel().getPath(),
+                        null,
+                        () -> bufferPool);
+        sortMergedResultPartition.setup();
+        return sortMergedResultPartition;
+    }
+
+    private static final class TestBufferAvailabilityListener
+            implements BufferAvailabilityListener {
+
+        private int numNotifications;
+
+        @Override
+        public synchronized void notifyDataAvailable() {
+            if (numNotifications == 0) {
+                notifyAll();
+            }
+            ++numNotifications;
+        }
+
+        public synchronized void waitForData() throws InterruptedException {
+            if (numNotifications == 0) {
+                wait();
+            }
+            numNotifications = 0;
+        }
+    }
 }

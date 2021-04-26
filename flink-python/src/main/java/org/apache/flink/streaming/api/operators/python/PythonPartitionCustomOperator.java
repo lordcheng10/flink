@@ -20,68 +20,63 @@ package org.apache.flink.streaming.api.operators.python;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.CoreOptions;
-import org.apache.flink.core.memory.ManagedMemoryUseCase;
-import org.apache.flink.python.PythonFunctionRunner;
-import org.apache.flink.python.env.PythonEnvironmentManager;
 import org.apache.flink.streaming.api.functions.python.DataStreamPythonFunctionInfo;
-import org.apache.flink.streaming.api.runners.python.beam.BeamDataStreamPythonFunctionRunner;
 
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.apache.flink.streaming.api.utils.PythonOperatorUtils.getUserDefinedDataStreamFunctionProto;
-
 /**
  * The {@link PythonPartitionCustomOperator} enables us to set the number of partitions for current
- * operator dynamically when generating the {@link org.apache.flink.streaming.api.graph.StreamGraph} before executing
- * the job. The number of partitions will be set in environment variables for python Worker, so that we can obtain the
- * number of partitions when executing user defined partitioner function.
+ * operator dynamically when generating the {@link org.apache.flink.streaming.api.graph.StreamGraph}
+ * before executing the job. The number of partitions will be set in environment variables for
+ * python Worker, so that we can obtain the number of partitions when executing user defined
+ * partitioner function.
  */
 @Internal
-public class PythonPartitionCustomOperator<IN, OUT> extends StatelessOneInputPythonFunctionOperator<IN, OUT> {
+public class PythonPartitionCustomOperator<IN, OUT>
+        extends OneInputPythonFunctionOperator<IN, OUT, IN, OUT> {
 
-	private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 1L;
 
-	private static final String NUM_PARTITIONS = "NUM_PARTITIONS";
+    private static final String NUM_PARTITIONS = "NUM_PARTITIONS";
 
-	private int numPartitions = CoreOptions.DEFAULT_PARALLELISM.defaultValue();
+    private static final String MAP_CODER_URN = "flink:coder:map:v1";
 
-	public PythonPartitionCustomOperator(
-		Configuration config,
-		TypeInformation<IN> inputTypeInfo,
-		TypeInformation<OUT> outputTypeInfo,
-		DataStreamPythonFunctionInfo pythonFunctionInfo) {
-		super(config, inputTypeInfo, outputTypeInfo, pythonFunctionInfo);
-	}
+    private int numPartitions = CoreOptions.DEFAULT_PARALLELISM.defaultValue();
 
-	@Override
-	public PythonFunctionRunner createPythonFunctionRunner() throws Exception {
-		PythonEnvironmentManager pythonEnvironmentManager = createPythonEnvironmentManager();
-		Map<String, String> internalParameters = new HashMap<>();
-		internalParameters.put(NUM_PARTITIONS, String.valueOf(this.numPartitions));
-		return new BeamDataStreamPythonFunctionRunner(
-			getRuntimeContext().getTaskName(),
-			pythonEnvironmentManager,
-			inputTypeInfo,
-			outputTypeInfo,
-			DATA_STREAM_STATELESS_FUNCTION_URN,
-			getUserDefinedDataStreamFunctionProto(pythonFunctionInfo, getRuntimeContext(), internalParameters),
-			MAP_CODER_URN,
-			jobOptions,
-			getFlinkMetricContainer(),
-			null,
-			null,
-			getContainingTask().getEnvironment().getMemoryManager(),
-			getOperatorConfig().getManagedMemoryFractionOperatorUseCaseOfSlot(
-				ManagedMemoryUseCase.PYTHON,
-				getContainingTask().getEnvironment().getTaskManagerInfo().getConfiguration(),
-				getContainingTask().getEnvironment().getUserCodeClassLoader().asClassLoader())
-		);
-	}
+    public PythonPartitionCustomOperator(
+            Configuration config,
+            TypeInformation<IN> inputTypeInfo,
+            TypeInformation<OUT> outputTypeInfo,
+            DataStreamPythonFunctionInfo pythonFunctionInfo) {
+        super(config, inputTypeInfo, outputTypeInfo, pythonFunctionInfo);
+    }
 
-	public void setNumPartitions(int numPartitions) {
-		this.numPartitions = numPartitions;
-	}
+    @Override
+    public void emitResult(Tuple2<byte[], Integer> resultTuple) throws Exception {
+        byte[] rawResult = resultTuple.f0;
+        int length = resultTuple.f1;
+        bais.setBuffer(rawResult, 0, length);
+        collector.setAbsoluteTimestamp(bufferedTimestamp.poll());
+        collector.collect(runnerOutputTypeSerializer.deserialize(baisWrapper));
+    }
+
+    @Override
+    public Map<String, String> getInternalParameters() {
+        Map<String, String> internalParameters = new HashMap<>();
+        internalParameters.put(NUM_PARTITIONS, String.valueOf(this.numPartitions));
+        return internalParameters;
+    }
+
+    @Override
+    public String getCoderUrn() {
+        return MAP_CODER_URN;
+    }
+
+    public void setNumPartitions(int numPartitions) {
+        this.numPartitions = numPartitions;
+    }
 }

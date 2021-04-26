@@ -193,7 +193,7 @@ class Schema(Descriptor):
                         event-time attribute.
         """
         gateway = get_gateway()
-        self._j_schema = gateway.jvm.Schema()
+        self._j_schema = gateway.jvm.org.apache.flink.table.descriptors.Schema()
         super(Schema, self).__init__(self._j_schema)
 
         if schema is not None:
@@ -278,7 +278,7 @@ class Schema(Descriptor):
         """
         Specifies the previously defined field as a processing-time attribute.
 
-        E.g. field("proctime", Types.SQL_TIMESTAMP).proctime()
+        E.g. field("proctime", Types.SQL_TIMESTAMP_LTZ).proctime()
 
         :return: This schema object.
         """

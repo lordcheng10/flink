@@ -32,49 +32,71 @@ import org.apache.flink.connector.kafka.source.split.KafkaPartitionSplit;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.OffsetCommitCallback;
 import org.apache.kafka.common.TopicPartition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.function.Supplier;
 
 /**
- * The SplitFetcherManager for Kafka source. This class is needed to help
- * commit the offsets to Kafka using the KafkaConsumer inside the
- * {@link org.apache.flink.connector.kafka.source.reader.KafkaPartitionSplitReader}.
+ * The SplitFetcherManager for Kafka source. This class is needed to help commit the offsets to
+ * Kafka using the KafkaConsumer inside the {@link
+ * org.apache.flink.connector.kafka.source.reader.KafkaPartitionSplitReader}.
  */
 public class KafkaSourceFetcherManager<T>
-		extends SingleThreadFetcherManager<Tuple3<T, Long, Long>, KafkaPartitionSplit> {
+        extends SingleThreadFetcherManager<Tuple3<T, Long, Long>, KafkaPartitionSplit> {
+    private static final Logger LOG = LoggerFactory.getLogger(KafkaSourceFetcherManager.class);
 
-	/**
-	 * Creates a new SplitFetcherManager with a single I/O threads.
-	 *
-	 * @param elementsQueue       The queue that is used to hand over data from the I/O thread (the fetchers)
-	 *                            to the reader (which emits the records and book-keeps the state.
-	 *                            This must be the same queue instance that is also passed to the {@link SourceReaderBase}.
-	 * @param splitReaderSupplier The factory for the split reader that connects to the source system.
-	 */
-	public KafkaSourceFetcherManager(
-		FutureCompletingBlockingQueue<RecordsWithSplitIds<Tuple3<T, Long, Long>>> elementsQueue,
-		Supplier<SplitReader<Tuple3<T, Long, Long>, KafkaPartitionSplit>> splitReaderSupplier) {
-		super(elementsQueue, splitReaderSupplier);
-	}
+    /**
+     * Creates a new SplitFetcherManager with a single I/O threads.
+     *
+     * @param elementsQueue The queue that is used to hand over data from the I/O thread (the
+     *     fetchers) to the reader (which emits the records and book-keeps the state. This must be
+     *     the same queue instance that is also passed to the {@link SourceReaderBase}.
+     * @param splitReaderSupplier The factory for the split reader that connects to the source
+     *     system.
+     */
+    public KafkaSourceFetcherManager(
+            FutureCompletingBlockingQueue<RecordsWithSplitIds<Tuple3<T, Long, Long>>> elementsQueue,
+            Supplier<SplitReader<Tuple3<T, Long, Long>, KafkaPartitionSplit>> splitReaderSupplier) {
+        super(elementsQueue, splitReaderSupplier);
+    }
 
-	public void commitOffsets(
-			Map<TopicPartition, OffsetAndMetadata> offsetsToCommit,
-			OffsetCommitCallback callback) {
-		SplitFetcher<Tuple3<T, Long, Long>, KafkaPartitionSplit> splitFetcher = fetchers.get(0);
-		KafkaPartitionSplitReader<T> kafkaReader =
-			(KafkaPartitionSplitReader<T>) splitFetcher.getSplitReader();
+    public void commitOffsets(
+            Map<TopicPartition, OffsetAndMetadata> offsetsToCommit, OffsetCommitCallback callback) {
+        LOG.debug("Committing offsets {}", offsetsToCommit);
+        if (offsetsToCommit.isEmpty()) {
+            return;
+        }
+        SplitFetcher<Tuple3<T, Long, Long>, KafkaPartitionSplit> splitFetcher = fetchers.get(0);
+        if (splitFetcher != null) {
+            // The fetcher thread is still running. This should be the majority of the cases.
+            enqueueOffsetsCommitTask(splitFetcher, offsetsToCommit, callback);
+        } else {
+            splitFetcher = createSplitFetcher();
+            enqueueOffsetsCommitTask(splitFetcher, offsetsToCommit, callback);
+            startFetcher(splitFetcher);
+        }
+    }
 
-		splitFetcher.enqueueTask(new SplitFetcherTask() {
-			@Override
-			public boolean run() throws IOException {
-				kafkaReader.notifyCheckpointComplete(offsetsToCommit, callback);
-				return true;
-			}
+    private void enqueueOffsetsCommitTask(
+            SplitFetcher<Tuple3<T, Long, Long>, KafkaPartitionSplit> splitFetcher,
+            Map<TopicPartition, OffsetAndMetadata> offsetsToCommit,
+            OffsetCommitCallback callback) {
+        KafkaPartitionSplitReader<T> kafkaReader =
+                (KafkaPartitionSplitReader<T>) splitFetcher.getSplitReader();
 
-			@Override
-			public void wakeUp() {}
-		});
-	}
+        splitFetcher.enqueueTask(
+                new SplitFetcherTask() {
+                    @Override
+                    public boolean run() throws IOException {
+                        kafkaReader.notifyCheckpointComplete(offsetsToCommit, callback);
+                        return true;
+                    }
+
+                    @Override
+                    public void wakeUp() {}
+                });
+    }
 }

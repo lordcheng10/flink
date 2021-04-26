@@ -18,7 +18,7 @@
 
 import datetime
 import decimal
-import pickle
+import cloudpickle
 import struct
 from typing import Any, Tuple
 from typing import List
@@ -26,16 +26,40 @@ from typing import List
 import pyarrow as pa
 from apache_beam.coders.coder_impl import StreamCoderImpl, create_InputStream, create_OutputStream
 
+from pyflink.fn_execution.flink_fn_execution_pb2 import CoderParam
 from pyflink.fn_execution.ResettableIO import ResettableIO
 from pyflink.common import Row, RowKind
+from pyflink.datastream.window import TimeWindow, CountWindow
 from pyflink.table.utils import pandas_to_arrow, arrow_to_pandas
 
 ROW_KIND_BIT_SIZE = 2
 
 
+class TimeWindowCoderImpl(StreamCoderImpl):
+
+    def encode_to_stream(self, value: TimeWindow, stream, nested):
+        stream.write_bigendian_int64(value.start)
+        stream.write_bigendian_int64(value.end)
+
+    def decode_from_stream(self, stream, nested):
+        start = stream.read_bigendian_int64()
+        end = stream.read_bigendian_int64()
+        return TimeWindow(start, end)
+
+
+class CountWindowCoderImpl(StreamCoderImpl):
+
+    def encode_to_stream(self, value: CountWindow, stream, nested):
+        stream.write_bigendian_int64(value.id)
+
+    def decode_from_stream(self, stream, nested):
+        id = stream.read_bigendian_int64()
+        return CountWindow(id)
+
+
 class FlattenRowCoderImpl(StreamCoderImpl):
 
-    def __init__(self, field_coders):
+    def __init__(self, field_coders, output_mode=CoderParam.SINGLE):
         self._field_coders = field_coders
         self._field_count = len(field_coders)
         # the row kind uses the first 2 bits of the bitmap, the remaining bits are used for null
@@ -47,6 +71,11 @@ class FlattenRowCoderImpl(StreamCoderImpl):
         self.null_byte_search_table = (0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01)
         self.row_kind_search_table = [0x00, 0x80, 0x40, 0xC0]
         self.data_out_stream = create_OutputStream()
+        from pyflink.fn_execution import flink_fn_execution_pb2
+        if output_mode == flink_fn_execution_pb2.CoderParam.MULTIPLE:
+            self._single_output = False
+        else:
+            self._single_output = True
 
     @staticmethod
     def generate_null_mask_search_table():
@@ -63,6 +92,25 @@ class FlattenRowCoderImpl(StreamCoderImpl):
         return tuple(null_mask)
 
     def encode_to_stream(self, value, out_stream, nested):
+        if self._single_output:
+            self._encode_one_row(value, out_stream, nested)
+        else:
+            for item in value:
+                self._encode_one_row(item, out_stream, nested)
+
+    def encode_nested(self, value: List):
+        data_out_stream = self.data_out_stream
+        self._encode_one_row_to_stream(value, data_out_stream, True)
+        result = data_out_stream.get()
+        data_out_stream._clear()
+        return result
+
+    def decode_from_stream(self, in_stream, nested):
+        while in_stream.size() > 0:
+            in_stream.read_var_int64()
+            yield self._decode_one_row_from_stream(in_stream, nested)[1]
+
+    def _encode_one_row(self, value, out_stream, nested):
         field_coders = self._field_coders
         data_out_stream = self.data_out_stream
         self._write_mask(value, data_out_stream)
@@ -74,14 +122,12 @@ class FlattenRowCoderImpl(StreamCoderImpl):
         out_stream.write(data_out_stream.get())
         data_out_stream._clear()
 
-    def decode_from_stream(self, in_stream, nested):
-        while in_stream.size() > 0:
-            in_stream.read_var_int64()
-            yield self._decode_one_row_from_stream(in_stream, nested)[1]
-
-    def _encode_one_row_to_stream(self, value: Row, out_stream, nested):
+    def _encode_one_row_to_stream(self, value, out_stream, nested):
         field_coders = self._field_coders
-        self._write_mask(value, out_stream, value.get_row_kind().value)
+        if isinstance(value, Row):
+            self._write_mask(value, out_stream, value.get_row_kind().value)
+        else:
+            self._write_mask(value, out_stream)
         for i in range(self._field_count):
             item = value[i]
             if item is not None:
@@ -144,8 +190,9 @@ class FlattenRowCoderImpl(StreamCoderImpl):
 
 class RowCoderImpl(FlattenRowCoderImpl):
 
-    def __init__(self, field_coders):
+    def __init__(self, field_coders, field_names):
         super(RowCoderImpl, self).__init__(field_coders)
+        self.field_names = field_names
 
     def encode_to_stream(self, value: Row, out_stream, nested):
         self._encode_one_row_to_stream(value, out_stream, nested)
@@ -153,6 +200,7 @@ class RowCoderImpl(FlattenRowCoderImpl):
     def decode_from_stream(self, in_stream, nested):
         row_kind_value, fields = self._decode_one_row_from_stream(in_stream, nested)
         row = Row(*fields)
+        row.set_field_names(self.field_names)
         row.set_row_kind(RowKind(row_kind_value))
         return row
 
@@ -208,7 +256,7 @@ class AggregateFunctionRowCoderImpl(StreamCoderImpl):
             data_out_stream._clear()
 
     def decode_from_stream(self, in_stream, nested):
-        return self._flatten_row_coder.decode_from_stream(in_stream, nested)
+        return [[item for item in self._flatten_row_coder.decode_from_stream(in_stream, nested)]]
 
     def __repr__(self):
         return 'AggregateFunctionRowCoderImpl[%s]' % repr(self._flatten_row_coder)
@@ -262,7 +310,7 @@ class PickledBytesCoderImpl(StreamCoderImpl):
         self.field_coder = BinaryCoderImpl()
 
     def encode_to_stream(self, value, out_stream, nested):
-        coded_data = pickle.dumps(value)
+        coded_data = cloudpickle.dumps(value)
         self.field_coder.encode_to_stream(coded_data, out_stream, nested)
 
     def decode_from_stream(self, in_stream, nested):
@@ -270,7 +318,7 @@ class PickledBytesCoderImpl(StreamCoderImpl):
 
     def _decode_one_value_from_stream(self, in_stream: create_InputStream, nested):
         real_data = self.field_coder.decode_from_stream(in_stream, nested)
-        value = pickle.loads(real_data)
+        value = cloudpickle.loads(real_data)
         return value
 
     def __repr__(self) -> str:
@@ -306,8 +354,11 @@ class DataStreamFlatMapCoderImpl(StreamCoderImpl):
 
     def encode_to_stream(self, iter_value, stream,
                          nested):  # type: (Any, create_OutputStream, bool) -> None
-        for value in iter_value:
-            self._field_coder.encode_to_stream(value, stream, nested)
+        if iter_value:
+            for value in iter_value:
+                self._field_coder.encode_to_stream(value, stream, nested)
+        stream.write_var_int64(1)
+        stream.write_byte(0x00)
 
     def decode_from_stream(self, stream, nested):
         return self._field_coder.decode_from_stream(stream, nested)
@@ -589,13 +640,13 @@ class ArrowCoderImpl(StreamCoderImpl):
         self._timezone = timezone
         self._resettable_io = ResettableIO()
         self._batch_reader = ArrowCoderImpl._load_from_stream(self._resettable_io)
-        self._batch_writer = pa.RecordBatchStreamWriter(self._resettable_io, self._schema)
         self.data_out_stream = create_OutputStream()
         self._resettable_io.set_output_stream(self.data_out_stream)
 
     def encode_to_stream(self, cols, out_stream, nested):
         data_out_stream = self.data_out_stream
-        self._batch_writer.write_batch(
+        batch_writer = pa.RecordBatchStreamWriter(self._resettable_io, self._schema)
+        batch_writer.write_batch(
             pandas_to_arrow(self._schema, self._timezone, self._field_types, cols))
         out_stream.write_var_int64(data_out_stream.size())
         out_stream.write(data_out_stream.get())
@@ -607,9 +658,9 @@ class ArrowCoderImpl(StreamCoderImpl):
 
     @staticmethod
     def _load_from_stream(stream):
-        reader = pa.ipc.open_stream(stream)
-        for batch in reader:
-            yield batch
+        while stream.readable():
+            reader = pa.ipc.open_stream(stream)
+            yield reader.read_next_batch()
 
     def _decode_one_batch_from_stream(self, in_stream: create_InputStream, size: int) -> List:
         self._resettable_io.set_input_bytes(in_stream.read(size))

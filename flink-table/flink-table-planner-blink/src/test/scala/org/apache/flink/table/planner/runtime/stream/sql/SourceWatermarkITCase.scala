@@ -18,28 +18,141 @@
 
 package org.apache.flink.table.planner.runtime.stream.sql
 
-import java.sql.Timestamp
-import java.time.LocalDateTime
 import org.apache.flink.api.scala._
 import org.apache.flink.table.api.bridge.scala._
 import org.apache.flink.table.data.TimestampData
 import org.apache.flink.table.planner.factories.TestValuesTableFactory
 import org.apache.flink.table.planner.runtime.utils.BatchTestBase.row
-import org.apache.flink.table.planner.runtime.utils.{StreamingTestBase, TestingAppendSink}
 import org.apache.flink.table.planner.runtime.utils.JavaUserDefinedScalarFunctions.JavaFunc5
+import org.apache.flink.table.planner.runtime.utils.{StreamingTestBase, TestingAppendSink}
+import org.apache.flink.table.utils.LegacyRowResource
 import org.apache.flink.types.Row
 
 import org.junit.Assert.assertEquals
-import org.junit.{Ignore, Test}
+import org.junit.{Rule, Test}
+
+import java.sql.Timestamp
+import java.time.{Instant, LocalDateTime, ZoneId}
 
 import scala.collection.JavaConverters._
 
-class SourceWatermarkITCase extends StreamingTestBase{
+class SourceWatermarkITCase extends StreamingTestBase {
+
+  @Rule
+  def usesLegacyRows: LegacyRowResource = LegacyRowResource.INSTANCE
+
+  @Test
+  def testSimpleWatermarkPushDown(): Unit = {
+    val data = Seq(
+      row(1, 2L, LocalDateTime.parse("2020-11-21T19:00:05.23")),
+      row(2, 3L, LocalDateTime.parse("2020-11-21T21:00:05.23"))
+    )
+
+    val dataId = TestValuesTableFactory.registerData(data)
+
+    val ddl =
+      s"""
+         | CREATE Table VirtualTable (
+         |   a INT,
+         |   b BIGINT,
+         |   c TIMESTAMP(3),
+         |   d as c - INTERVAL '5' second,
+         |   WATERMARK FOR d as d + INTERVAL '5' second
+         | ) with (
+         |   'connector' = 'values',
+         |   'bounded' = 'false',
+         |   'enable-watermark-push-down' = 'true',
+         |   'disable-lookup' = 'true',
+         |   'data-id' = '$dataId'
+         | )
+         |""".stripMargin
+
+    tEnv.executeSql(ddl)
+
+    val expectedWatermarkOutput = Seq(
+      "2020-11-21T19:00:05.230",
+      "2020-11-21T21:00:05.230")
+    val expectedData = Seq(
+      "1,2,2020-11-21T19:00:05.230",
+      "2,3,2020-11-21T21:00:05.230"
+    )
+
+    val query = "SELECT a, b, c FROM VirtualTable"
+    val result = tEnv.sqlQuery(query).toAppendStream[Row]
+    val sink = new TestingAppendSink
+    result.addSink(sink)
+    env.execute()
+
+    val actualWatermark = TestValuesTableFactory.getWatermarkOutput("VirtualTable")
+      .asScala
+      .map(x => TimestampData.fromEpochMillis(x.getTimestamp).toLocalDateTime.toString)
+      .toList
+
+    assertEquals(expectedWatermarkOutput, actualWatermark)
+    assertEquals(expectedData.sorted, sink.getAppendResults.sorted)
+  }
+
+  @Test
+  def testSimpleWatermarkOnTimestampLtzPushDown(): Unit = {
+    val zoneId = ZoneId.of("Asia/Shanghai")
+    tEnv.getConfig.setLocalTimeZone(zoneId)
+    val data = Seq(
+      row(1, 2L, LocalDateTime.parse("2020-11-21T19:00:05.23").atZone(zoneId).toInstant),
+      row(2, 3L, LocalDateTime.parse("2020-11-21T21:00:05.23").atZone(zoneId).toInstant)
+    )
+
+    val dataId = TestValuesTableFactory.registerData(data)
+
+    val ddl =
+      s"""
+         | CREATE Table VirtualTable1 (
+         |   a INT,
+         |   b BIGINT,
+         |   c TIMESTAMP_LTZ(3),
+         |   d as c - INTERVAL '5' second,
+         |   WATERMARK FOR d as d + INTERVAL '5' second
+         | ) with (
+         |   'connector' = 'values',
+         |   'bounded' = 'false',
+         |   'enable-watermark-push-down' = 'true',
+         |   'disable-lookup' = 'true',
+         |   'data-id' = '$dataId'
+         | )
+         |""".stripMargin
+
+    tEnv.executeSql(ddl)
+
+    val expectedWatermarkOutput = Seq(
+      "2020-11-21T19:00:05.230",
+      "2020-11-21T21:00:05.230")
+    val expectedData = Seq(
+      "1,2,2020-11-21T11:00:05.230Z", //the utc timestamp of local ts 2020-11-21T19:00:05.230
+      "2,3,2020-11-21T13:00:05.230Z"  //the utc timestamp of local ts 2020-11-21T21:00:05.230
+    )
+
+    val query = "SELECT a, b, c FROM VirtualTable1"
+    val result = tEnv.sqlQuery(query).toAppendStream[Row]
+    val sink = new TestingAppendSink
+    result.addSink(sink)
+    env.execute()
+
+    val actualWatermark = TestValuesTableFactory.getWatermarkOutput("VirtualTable1")
+      .asScala
+      .map(x =>
+        LocalDateTime.ofInstant(Instant.ofEpochMilli(x.getTimestamp), zoneId).toString)
+      .toList
+
+    assertEquals(expectedWatermarkOutput, actualWatermark)
+    assertEquals(expectedData.sorted, sink.getAppendResults.sorted)
+  }
+
   @Test
   def testWatermarkWithNestedRow(): Unit = {
     val data = Seq(
+      row(0, 0L, row("h1", row("h2", null))),
       row(1, 2L, row("i1", row("i2", LocalDateTime.parse("2020-11-21T19:00:05.23")))),
-      row(2, 3L, row("j1", row("j2", LocalDateTime.parse("2020-11-21T21:00:05.23"))))
+      row(2, 3L, row("j1", row("j2", LocalDateTime.parse("2020-11-21T21:00:05.23")))),
+      row(3, 4L, row("k1", row("k2", null)))
     )
 
     val dataId = TestValuesTableFactory.registerData(data)
@@ -64,11 +177,15 @@ class SourceWatermarkITCase extends StreamingTestBase{
     tEnv.executeSql(ddl)
 
     val expectedWatermarkOutput = Seq(
+      TimestampData.fromEpochMillis(Long.MinValue).toString,
       "2020-11-21T19:00:00.230",
+      "2020-11-21T21:00:00.230",
       "2020-11-21T21:00:00.230")
     val expectedData = Seq(
+      "0,0,h2,null",
       "1,2,i2,2020-11-21T19:00:05.230",
-      "2,3,j2,2020-11-21T21:00:05.230"
+      "2,3,j2,2020-11-21T21:00:05.230",
+      "3,4,k2,null"
     )
 
     val query = "SELECT a, b, c.d FROM NestedTable"
@@ -139,10 +256,8 @@ class SourceWatermarkITCase extends StreamingTestBase{
     assertEquals(expectedData.sorted, sink.getAppendResults.sorted)
   }
 
-  @Ignore
   @Test
   def testWatermarkWithMetadata(): Unit = {
-    // TODO(FLINK-20029): define computed column on the metadata
     val data = Seq(
       row(1, 2L, Timestamp.valueOf("2020-11-21 19:00:05.23").toInstant.toEpochMilli),
       row(1, 3L, Timestamp.valueOf("2020-11-21 21:00:05.23").toInstant.toEpochMilli)

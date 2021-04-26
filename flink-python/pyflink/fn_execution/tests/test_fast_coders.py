@@ -20,6 +20,7 @@
 import logging
 import unittest
 
+from pyflink.datastream.window import TimeWindow, CountWindow
 from pyflink.testing.test_case_utils import PyFlinkTestCase
 
 try:
@@ -211,13 +212,16 @@ class CodersTest(PyFlinkTestCase):
 
     def test_cython_row_coder(self):
         from pyflink.common import Row, RowKind
-        field_count = 2
-        row = Row(*[None if i % 2 == 0 else i for i in range(field_count)])
+        field_count = 15
+        field_names = ['f{}'.format(i) for i in range(field_count)]
+        row = Row(**{field_names[i]: None if i % 2 == 0 else i for i in range(field_count)})
         data = [row]
         python_field_coders = [coder_impl.RowCoderImpl([coder_impl.BigIntCoderImpl()
-                                                        for _ in range(field_count)])]
+                                                        for _ in range(field_count)],
+                                                       row._fields)]
         cython_field_coders = [coder_impl_fast.RowCoderImpl([coder_impl_fast.BigIntCoderImpl()
-                                                             for _ in range(field_count)])]
+                                                             for _ in range(field_count)],
+                                                            row._fields)]
         row.set_row_kind(RowKind.INSERT)
         self.check_cython_coder(python_field_coders, cython_field_coders, data)
         row.set_row_kind(RowKind.UPDATE_BEFORE)
@@ -226,6 +230,30 @@ class CodersTest(PyFlinkTestCase):
         self.check_cython_coder(python_field_coders, cython_field_coders, data)
         row.set_row_kind(RowKind.DELETE)
         self.check_cython_coder(python_field_coders, cython_field_coders, data)
+
+    def test_cython_time_window_coder(self):
+        fast_coder = coder_impl_fast.TimeWindowCoderImpl()
+        slow_coder = coder_impl.TimeWindowCoderImpl()
+        window = TimeWindow(100, 200)
+        self.assertEqual(fast_coder.encode_nested(window), slow_coder.encode_nested(window))
+
+    def test_cython_count_window_coder(self):
+        fast_coder = coder_impl_fast.CountWindowCoderImpl()
+        slow_coder = coder_impl.CountWindowCoderImpl()
+        window = CountWindow(100)
+        self.assertEqual(fast_coder.encode_nested(window), slow_coder.encode_nested(window))
+
+    def test_cython_coder_with_wrong_result_type(self):
+        from apache_beam.coders.coder_impl import create_OutputStream
+        from pyflink.fn_execution.beam.beam_stream import BeamOutputStream
+        data = ['1']
+        cython_field_coders = [coder_impl_fast.BigIntCoderImpl() for _ in range(len(data))]
+        cy_flatten_row_coder = coder_impl_fast.FlattenRowCoderImpl(cython_field_coders)
+        beam_output_stream = create_OutputStream()
+        output_stream = BeamOutputStream(beam_output_stream)
+        with self.assertRaises(TypeError) as context:
+            cy_flatten_row_coder.encode_to_stream(data, output_stream)
+        self.assertIn('an integer is required', str(context.exception))
 
 
 if __name__ == '__main__':
