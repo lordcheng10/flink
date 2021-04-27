@@ -24,6 +24,10 @@ import org.apache.flink.streaming.runtime.streamrecord.LatencyMarker;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 
+/**
+ * 这个应该是流的sink算子.
+ * 用于执行{@link SinkFunction SinkFunctions}的{@link StreamOperator}。
+ * */
 /** A {@link StreamOperator} for executing {@link SinkFunction SinkFunctions}. */
 @Internal
 public class StreamSink<IN> extends AbstractUdfStreamOperator<Object, SinkFunction<IN>>
@@ -48,6 +52,9 @@ public class StreamSink<IN> extends AbstractUdfStreamOperator<Object, SinkFuncti
         this.sinkContext = new SimpleContext<>(getProcessingTimeService());
     }
 
+    /**
+     * 这个是流调用
+     * */
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
         sinkContext.element = element;

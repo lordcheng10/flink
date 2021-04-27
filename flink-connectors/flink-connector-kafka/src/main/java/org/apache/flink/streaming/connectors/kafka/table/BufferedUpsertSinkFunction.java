@@ -54,6 +54,8 @@ import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
+ *
+ * {@link RichSinkFunction}的包装器。它将缓冲数据并在缓冲区满或计时器被触发或检查点时发出。
  * The wrapper of the {@link RichSinkFunction}. It will buffer the data and emit when the buffer is
  * full or timer is triggered or checkpointing.
  */

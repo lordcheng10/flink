@@ -78,6 +78,9 @@ public class MapDriver<IT, OT> implements Driver<MapFunction<IT, OT>, OT> {
 
     @Override
     public void run() throws Exception {
+        /**
+         * metric
+         * */
         final Counter numRecordsIn =
                 this.taskContext.getMetricGroup().getIOMetricGroup().getNumRecordsInCounter();
         final Counter numRecordsOut =

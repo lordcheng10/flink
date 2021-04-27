@@ -32,8 +32,13 @@ import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.TimestampData;
 
 /**
- * A {@link StreamOperator} for executing {@link SinkFunction SinkFunctions}. This operator also
- * checks writing null values into NOT NULL columns.
+ * 这个是批处理的sink算子
+ * */
+/**
+ * 用于执行{@link SinkFunction SinkFunctions}的{@link StreamOperator}。
+ * 该操作符还检查将空值写入NOT null列。
+ * A {@link StreamOperator} for executing {@link SinkFunction SinkFunctions}.
+ * This operator also checks writing null values into NOT NULL columns.
  */
 public class SinkOperator extends AbstractUdfStreamOperator<Object, SinkFunction<RowData>>
         implements OneInputStreamOperator<RowData, Object> {
@@ -59,6 +64,9 @@ public class SinkOperator extends AbstractUdfStreamOperator<Object, SinkFunction
         this.sinkContext = new SimpleContext(getProcessingTimeService());
     }
 
+    /**
+     * 这个应该是批处理调用
+     * */
     @Override
     public void processElement(StreamRecord<RowData> element) throws Exception {
         sinkContext.element = element;
