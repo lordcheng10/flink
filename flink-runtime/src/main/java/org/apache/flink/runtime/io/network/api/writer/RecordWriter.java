@@ -98,11 +98,19 @@ public abstract class RecordWriter<T extends IOReadableWritable> implements Avai
         }
     }
 
+    /**
+     * emit是发射，发送的意思.
+     *
+     * */
     protected void emit(T record, int targetSubpartition) throws IOException {
+        //发送前先检查flush的时候是否有异常，有异常就直接外抛
         checkErroneous();
 
         targetPartition.emitRecord(serializeRecord(serializer, record), targetSubpartition);
 
+        /**
+         * 如果开启每次都flush，那么这里会强制flush
+         * */
         if (flushAlways) {
             targetPartition.flush(targetSubpartition);
         }
@@ -120,6 +128,9 @@ public abstract class RecordWriter<T extends IOReadableWritable> implements Avai
         }
     }
 
+    /**
+     * 把数据按照给定的方式序列化，然后放到ByteBuffer中.
+     * */
     @VisibleForTesting
     public static ByteBuffer serializeRecord(
             DataOutputSerializer serializer, IOReadableWritable record) throws IOException {
@@ -191,6 +202,9 @@ public abstract class RecordWriter<T extends IOReadableWritable> implements Avai
         }
     }
 
+    /**
+     * 这里检查是否有异常发生。
+     * */
     protected void checkErroneous() throws IOException {
         // For performance reasons, we are not checking volatile field every single time.
         if (flusherException != null

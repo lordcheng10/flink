@@ -49,11 +49,17 @@ public final class ChannelSelectorRecordWriter<T extends IOReadableWritable>
         this.channelSelector.setup(numberOfChannels);
     }
 
+    /**
+     * 发送一条消息
+     * */
     @Override
     public void emit(T record) throws IOException {
         emit(record, channelSelector.selectChannel(record));
     }
 
+    /**
+     * 广播发送
+     * */
     @Override
     public void broadcastEmit(T record) throws IOException {
         checkErroneous();

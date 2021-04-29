@@ -240,6 +240,10 @@ public abstract class BufferWritingResultPartition extends ResultPartition {
         if (targetSubpartition < 0 || targetSubpartition > unicastBufferBuilders.length) {
             throw new ArrayIndexOutOfBoundsException(targetSubpartition);
         }
+
+        /**
+         * 如果没在unicastBufferBuilders和subpartitions中，那么会创建一个放入其中，再 buffer.appendAndCommit(record);
+         * */
         BufferBuilder buffer = unicastBufferBuilders[targetSubpartition];
 
         if (buffer == null) {
