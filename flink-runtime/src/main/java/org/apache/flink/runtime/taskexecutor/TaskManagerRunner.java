@@ -87,6 +87,8 @@ import java.util.concurrent.TimeUnit;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
+ * 这个看起来是TaskManager的启动入口.
+ *
  * This class is the executable entry point for the task manager in yarn or standalone mode. It
  * constructs the related components (network, I/O manager, memory manager, RPC service, HA service)
  * and starts them.
@@ -336,7 +338,9 @@ public class TaskManagerRunner implements FatalErrorHandler {
     // --------------------------------------------------------------------------------------------
     //  Static entry point
     // --------------------------------------------------------------------------------------------
-
+    /**
+     * 这里是TaskManager的启动入口
+     * */
     public static void main(String[] args) throws Exception {
         // startup checks and logging
         EnvironmentInformation.logEnvironmentInfo(LOG, "TaskManager", args);
@@ -503,6 +507,9 @@ public class TaskManagerRunner implements FatalErrorHandler {
                         taskManagerServicesConfiguration.getNumIoThreads(),
                         new ExecutorThreadFactory("flink-taskexecutor-io"));
 
+        /**
+         * 这里构建了TaskManagerServices对象
+         * */
         TaskManagerServices taskManagerServices =
                 TaskManagerServices.fromConfiguration(
                         taskManagerServicesConfiguration,

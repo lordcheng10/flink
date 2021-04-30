@@ -269,6 +269,9 @@ public class TaskManagerServices {
         final IOManager ioManager =
                 new IOManagerAsync(taskManagerServicesConfiguration.getTmpDirPaths());
 
+        /**
+         * ShuffleEnvironment持有connectionManager的引用，也就是说它负责了连接的管理。
+         * **/
         final ShuffleEnvironment<?, ?> shuffleEnvironment =
                 createShuffleEnvironment(
                         taskManagerServicesConfiguration,

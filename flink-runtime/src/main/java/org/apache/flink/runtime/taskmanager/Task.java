@@ -566,6 +566,9 @@ public class Task
         }
     }
 
+    /**
+     * task的主要运行逻辑就是这个。
+     * */
     private void doRun() {
         // ----------------------------
         //  Initial State transition
@@ -649,6 +652,9 @@ public class Task
 
             LOG.debug("Registering task at network: {}.", this);
 
+            /**
+             * task任务启动的时候，会向ResultPartition注册bufferPool
+             * */
             setupPartitionsAndGates(consumableNotifyingPartitionWriters, inputGates);
 
             for (ResultPartitionWriter partitionWriter : consumableNotifyingPartitionWriters) {

@@ -50,6 +50,7 @@ import java.util.TimerTask;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
+/**一种输入通道，它请求一个本地子分区。**/
 /** An input channel, which requests a local subpartition. */
 public class LocalInputChannel extends InputChannel implements BufferAvailabilityListener {
 
@@ -62,14 +63,17 @@ public class LocalInputChannel extends InputChannel implements BufferAvailabilit
     /** The local partition manager. */
     private final ResultPartitionManager partitionManager;
 
+    /**用于向后事件的任务事件分派器。**/
     /** Task event dispatcher for backwards events. */
     private final TaskEventPublisher taskEventPublisher;
 
+    /**已经消费的subpartition**/
     /** The consumed subpartition. */
     @Nullable private volatile ResultSubpartitionView subpartitionView;
 
     private volatile boolean isReleased;
 
+    /** channel 状态持久化 **/
     private final ChannelStatePersister channelStatePersister;
 
     public LocalInputChannel(

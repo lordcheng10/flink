@@ -68,14 +68,21 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
         super.channelUnregistered(ctx);
     }
 
+    /**
+     * 从上游读取数据，写入ResultSubpartition中.
+     * */
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, NettyMessage msg) throws Exception {
         try {
             Class<?> msgClazz = msg.getClass();
 
             // ----------------------------------------------------------------
-            // Intermediate result partition requests
+            // Intermediate result partition requests :  中间结果分区请求
             // ----------------------------------------------------------------
+            /**
+             * 判断请求类型居然这样判断。感觉有点硬核，为啥要这样判断呢 ?
+             *
+             * */
             if (msgClazz == PartitionRequest.class) {
                 PartitionRequest request = (PartitionRequest) msg;
 
@@ -90,6 +97,9 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
                     reader.requestSubpartitionView(
                             partitionProvider, request.partitionId, request.queueIndex);
 
+                    /**
+                     * 看起来就是放到队列里
+                     * */
                     outboundQueue.notifyReaderCreated(reader);
                 } catch (PartitionNotFoundException notFound) {
                     respondWithError(ctx, notFound, request.receiverId);
@@ -98,7 +108,7 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
             // ----------------------------------------------------------------
             // Task events
             // ----------------------------------------------------------------
-            else if (msgClazz == TaskEventRequest.class) {
+            else if (msgClazz == TaskEventRequest.class) {//这样写感觉太硬核了
                 TaskEventRequest request = (TaskEventRequest) msg;
 
                 if (!taskEventPublisher.publish(request.partitionId, request.event)) {
