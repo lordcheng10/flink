@@ -146,7 +146,7 @@ public class ApplicationDispatcherBootstrap implements DispatcherBootstrap {
                 .handle(
                         (r, t) -> {
                             if (t == null) {
-                                //这里可以获取任务状完成态
+                                //这里可以获取任务状态
                                 LOG.info("Application completed SUCCESSFULLY");
                                 return dispatcherGateway.shutDownCluster(
                                         ApplicationStatus.SUCCEEDED);
