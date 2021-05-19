@@ -152,12 +152,19 @@ public class StreamExecutionEnvironment {
 
     // ------------------------------------------------------------------------
 
+    /**
+     * StreamExecutionEnvironment 也提供了用来配置默认并行度、Checkpointing 等机制的方法，
+     * 这些配置主要都保存在 ExecutionConfig 和 CheckpointConfig 中。
+     * */
     /** The execution configuration for this environment. */
     private final ExecutionConfig config = new ExecutionConfig();
 
     /** Settings that control the checkpointing behavior. */
     private final CheckpointConfig checkpointCfg = new CheckpointConfig();
 
+    /**
+     * 每个map和filter动作 实际就是把对应的算子加到这个数组中，然后根据该数据来构建图
+     * */
     protected final List<Transformation<?>> transformations = new ArrayList<>();
 
     private long bufferTimeout = StreamingJobGraphGenerator.UNDEFINED_NETWORK_BUFFER_TIMEOUT;
