@@ -17,11 +17,75 @@
 # limitations under the License.
 ################################################################################
 
+<<COMMENT
+这个方法主要是返回两个变量值,通过echo的方式。
+FLINK_CLASSPATH和FLINK_DIST.
+这两个变量有什么作用.
+COMMENT
 constructFlinkClassPath() {
     local FLINK_DIST
     local FLINK_CLASSPATH
 
+<<COMMENT
+    错误理解：有个问题哈 jarfile 是哪里定义的?  jarfile不是哪里定义的，是要求是jar类型文件：-r jarfile  要求是jar类型文件
+    -d 代表分隔符，这里是按照空格分割
+    -r 要求是jar类型文件
+
+    上面的理解是错误的，其实jarfile是一个变量，谁给它赋值呢？是<(find "$FLINK_LIB_DIR" ! -type d -name '*.jar' -print0 | sort -z)这个命令给赋值的，
+    你也可以在done后面接入一个文件，那么也会读取文件每一行来赋值，比如：
+    while read line;do ; echo $line; done < t.txt
+
+    而-d确实是代表分隔符，这里需要注意，比如文件内容是a,b,c 那么-d, 不会吧c打出来，需要在c后面也加一个， 比如： a,b,c,  eg:
+    while read -d, line;do ; echo $line; done < <(echo "a,b,c")
+    输出：
+    a
+    b
+
+    while read -d, line;do ; echo $line; done < <(echo "a,b,c,")
+    输出：
+    a
+    b
+    c
+
+    那么-r到底是什么含义呢？之前以为是文件格式 ，后面接文件类型，现在看起来是错误的。
+    read其实就是一个命令，read line 表示接受终端输入并赋值给line变量,eg:
+    ➜  ~ read -r line
+    wocao
+    ➜  ~ echo $line
+    wocao
+
+    而-d和-r都是read命令传入参数，read命令参数有：
+    -d 后面跟一个标志符，其实只有其后的第一个字符有用，作为结束的标志。
+    作为每次读取结束的标识符号，也就是说读取到哪里结束，然后赋值给变量。只有读取到该结束符后，才会结束读取，赋值给变量，
+    否则不会结束并赋值给变量，这也是为啥上面如果c后面没有逗号，就不会打出c的原因：while read -d, line;do ; echo $line; done < <(echo "a,b,c,")
+    -r 屏蔽\，如果没有该选项，则\作为一个转义字符，有的话 \就是个正常的字符了。
+	参考： http://note.youdao.com/s/Yneyew1P
+
+	接下来是这个命令：<(find "$FLINK_LIB_DIR" ! -type d -name '*.jar' -print0 | sort -z)
+	如果是从文件读取那么done后面只会有一个< ，但是如果是通过命令获取内容，那么还得加个< ,并且用括号把命令括起来，eg：
+	 while read line; do echo $line ; done < <(echo "aa")
+	 但为啥要加个<，感觉还没找到个合理的解释。。。
+
+	 <(find "$FLINK_LIB_DIR" ! -type d -name '*.jar' -print0 | sort -z)这个命令的含义是把jar包全部列出来.
+
+	 find 命令，有一些参数 ,这里 "$FLINK_LIB_DIR" 表示要查找的目录位置，  !是一个否定参数，否定接下来紧挨着的参数,
+	 -type d 表示目录，-name '*.jar' 表示以.jar结尾的。
+	 -print0：意思就是如果找到了符合条件的文件或者目录，那么按照同一行的格式输出到标准输出中。
+	 最后sort -z  表示以NUL作为记录分隔符。 默认情况下，文件中的记录应以换行符分隔。使用此选项时，NUL（'\ 0'）用作记录分隔符。
+
+	 参考：https://man.linuxde.net/find
+
+
+	 这个while循环实际就是在构建不同类型的classpath,
+	 FLINK_DIST 代表flink 分布式jar包path
+	 FLINK_CLASSPATH  代表其他的path
+
+
+➜  ~
+COMMENT
     while read -d '' -r jarfile ; do
+    	# =~后面接正则表达式，这里在进行模式匹配，注意=~后面的正则表达式，不能加引号，如果使用变量，在变量赋值的时候可以加，但在if条件里面也不能加
+    	#参考：https://www.cnblogs.com/gaochsh/p/6901807.html
         if [[ "$jarfile" =~ .*/flink-dist[^/]*.jar$ ]]; then
             FLINK_DIST="$FLINK_DIST":"$jarfile"
         elif [[ "$FLINK_CLASSPATH" == "" ]]; then
@@ -31,20 +95,41 @@ constructFlinkClassPath() {
         fi
     done < <(find "$FLINK_LIB_DIR" ! -type d -name '*.jar' -print0 | sort -z)
 
+    #检查是否有分布式jar包，没有就退出
     if [[ "$FLINK_DIST" == "" ]]; then
+    	#>&2代表标准输出？
+    	#linux中有三类文件是一直打开的，标准输入(0)、标准输出(1)、错误输出(2)，这里>&2，意思是把后面的内容输出到错误输出中。
+    	#那这里有个问题了，我输出到标准输出和错误输出有什么区别?我看最终都显示到了控制台了，看起来似乎一样
         # write error message to stderr since stdout is stored as the classpath
         (>&2 echo "[ERROR] Flink distribution jar not found in $FLINK_LIB_DIR.")
 
+		#这种情况下就退出
         # exit function with empty classpath to force process failure
         exit 1
     fi
 
+	#通过echo 的方式返回方法值
     echo "$FLINK_CLASSPATH""$FLINK_DIST"
 }
 
+<<COMMENT
+这里找出flink 分布式jar包
+COMMENT
 findFlinkDistJar() {
+	#local是什么？local在函数中定义变量，用来约束变量作用域，将变量作用域固定到函数内部；
+	# 如果不用local定义，函数中定义的变量作用域是从调用该函数开始到shell结束或变量删除的地方为止 ;
+	# 参考：https://blog.csdn.net/wangjianno2/article/details/50200617
+	# 这里定义了一个作用域在函数内部的局部变量FLINK_DIST，
+	# 把lib目录下的flink-dist前缀的jar包找出来，赋值给FLINK_DIST,
+	# 这里找出来的都是每个jar的绝对路径，一行是一个路径，类似：
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/connect-file-2.8.0-SNAPSHOT.jar
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/javassist-3.26.0-GA.jar
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/jakarta.validation-api-2.0.2.jar
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/jackson-module-jaxb-annotations-2.10.5.jar
+	#/Users/linchen/work/kafka_2.5/kafka/core/build/distributions/kafka_2.13-2.8.0-SNAPSHOT/libs/commons-lang3-3.8.1.jar
     local FLINK_DIST="`find "$FLINK_LIB_DIR" -name 'flink-dist*.jar'`"
 
+	#如果没有分布式jar包，那么久报错退出
     if [[ "$FLINK_DIST" == "" ]]; then
         # write error message to stderr since stdout is stored as the classpath
         (>&2 echo "[ERROR] Flink distribution jar not found in $FLINK_LIB_DIR.")
@@ -53,6 +138,8 @@ findFlinkDistJar() {
         exit 1
     fi
 
+
+	#最后还是以echo的方式返回值，我发现shell的函数返回值，一般都是用echo方式
     echo "$FLINK_DIST"
 }
 
@@ -60,6 +147,10 @@ findFlinkDistJar() {
 # cygwin. Cygwin paths are like linux paths, i.e. /path/to/somewhere
 # but the windows java version expects them in Windows Format, i.e. C:\bla\blub.
 # "cygpath" can do the conversion.
+<<COMMENT
+uname -s 命令用来显示操作系统名字
+
+COMMENT
 manglePath() {
     UNAME=$(uname -s)
     if [ "${UNAME:0:6}" == "CYGWIN" ]; then
@@ -105,7 +196,7 @@ readFromConfig() {
 # conf/flink-conf.yaml
 
 DEFAULT_ENV_PID_DIR="/tmp"                          # Directory to store *.pid files to
-DEFAULT_ENV_LOG_MAX=5                               # Maximum number of old log files to keep
+DEFAULT_ENV_LOG_MAX=10                              # Maximum number of old log files to keep
 DEFAULT_ENV_JAVA_OPTS=""                            # Optional JVM args
 DEFAULT_ENV_JAVA_OPTS_JM=""                         # Optional JVM args (JobManager)
 DEFAULT_ENV_JAVA_OPTS_TM=""                         # Optional JVM args (TaskManager)
@@ -167,9 +258,9 @@ SYMLINK_RESOLVED_BIN=`cd "$bin"; pwd -P`
 if [ -z "$_FLINK_HOME_DETERMINED" ]; then
     FLINK_HOME=`dirname "$SYMLINK_RESOLVED_BIN"`
 fi
-FLINK_LIB_DIR=$FLINK_HOME/lib
-FLINK_PLUGINS_DIR=$FLINK_HOME/plugins
-FLINK_OPT_DIR=$FLINK_HOME/opt
+if [ -z "$FLINK_LIB_DIR" ]; then FLINK_LIB_DIR=$FLINK_HOME/lib; fi
+if [ -z "$FLINK_PLUGINS_DIR" ]; then FLINK_PLUGINS_DIR=$FLINK_HOME/plugins; fi
+if [ -z "$FLINK_OPT_DIR" ]; then FLINK_OPT_DIR=$FLINK_HOME/opt; fi
 
 
 # These need to be mangled because they are directly passed to java.
@@ -200,22 +291,22 @@ MY_JAVA_HOME=$(readFromConfig ${KEY_ENV_JAVA_HOME} "" "${YAML_CONF}")
 # check if config specified JAVA_HOME
 if [ -z "${MY_JAVA_HOME}" ]; then
     # config did not specify JAVA_HOME. Use system JAVA_HOME
-    MY_JAVA_HOME=${JAVA_HOME}
+    MY_JAVA_HOME="${JAVA_HOME}"
 fi
 # check if we have a valid JAVA_HOME and if java is not available
 if [ -z "${MY_JAVA_HOME}" ] && ! type java > /dev/null 2> /dev/null; then
     echo "Please specify JAVA_HOME. Either in Flink config ./conf/flink-conf.yaml or as system-wide JAVA_HOME."
     exit 1
 else
-    JAVA_HOME=${MY_JAVA_HOME}
+    JAVA_HOME="${MY_JAVA_HOME}"
 fi
 
 UNAME=$(uname -s)
 if [ "${UNAME:0:6}" == "CYGWIN" ]; then
     JAVA_RUN=java
 else
-    if [[ -d $JAVA_HOME ]]; then
-        JAVA_RUN=$JAVA_HOME/bin/java
+    if [[ -d "$JAVA_HOME" ]]; then
+        JAVA_RUN="$JAVA_HOME"/bin/java
     else
         JAVA_RUN=java
     fi
@@ -241,6 +332,7 @@ fi
 
 if [ -z "${MAX_LOG_FILE_NUMBER}" ]; then
     MAX_LOG_FILE_NUMBER=$(readFromConfig ${KEY_ENV_LOG_MAX} ${DEFAULT_ENV_LOG_MAX} "${YAML_CONF}")
+    export MAX_LOG_FILE_NUMBER
 fi
 
 if [ -z "${FLINK_LOG_DIR}" ]; then
@@ -388,29 +480,6 @@ extractHostName() {
     echo $WORKER
 }
 
-# Auxilliary functions for log file rotation
-rotateLogFilesWithPrefix() {
-    dir=$1
-    prefix=$2
-    while read -r log ; do
-        rotateLogFile "$log"
-    # find distinct set of log file names, ignoring the rotation number (trailing dot and digit)
-    done < <(find "$dir" ! -type d -path "${prefix}*" | sed s/\.[0-9][0-9]*$// | sort | uniq)
-}
-
-rotateLogFile() {
-    log=$1;
-    num=$MAX_LOG_FILE_NUMBER
-    if [ -f "$log" -a "$num" -gt 0 ]; then
-        while [ $num -gt 1 ]; do
-            prev=`expr $num - 1`
-            [ -f "$log.$prev" ] && mv "$log.$prev" "$log.$num"
-            num=$prev
-        done
-        mv "$log" "$log.$num";
-    fi
-}
-
 readMasters() {
     MASTERS_FILE="${FLINK_CONF_DIR}/masters"
 
@@ -504,7 +573,7 @@ runBashJavaUtilsCmd() {
     local dynamic_args=${@:4}
     class_path=`manglePathList "${class_path}"`
 
-    local output=`${JAVA_RUN} -classpath "${class_path}" org.apache.flink.runtime.util.bash.BashJavaUtils ${cmd} --configDir "${conf_dir}" $dynamic_args 2>&1 | tail -n 1000`
+    local output=`"${JAVA_RUN}" -classpath "${class_path}" org.apache.flink.runtime.util.bash.BashJavaUtils ${cmd} --configDir "${conf_dir}" $dynamic_args 2>&1 | tail -n 1000`
     if [[ $? -ne 0 ]]; then
         echo "[ERROR] Cannot run BashJavaUtils to execute command ${cmd}." 1>&2
         # Print the output in case the user redirect the log to console.
@@ -546,10 +615,11 @@ extractLoggingOutputs() {
     echo "${output}" | grep -v ${EXECUTION_PREFIX}
 }
 
-parseJmJvmArgsAndExportLogs() {
-  java_utils_output=$(runBashJavaUtilsCmd GET_JM_RESOURCE_PARAMS "${FLINK_CONF_DIR}" "${FLINK_BIN_DIR}/bash-java-utils.jar:$(findFlinkDistJar)" "$@")
+parseResourceParamsAndExportLogs() {
+  local cmd=$1
+  java_utils_output=$(runBashJavaUtilsCmd ${cmd} "${FLINK_CONF_DIR}" "${FLINK_BIN_DIR}/bash-java-utils.jar:$(findFlinkDistJar)" "$@")
   logging_output=$(extractLoggingOutputs "${java_utils_output}")
-  jvm_params=$(extractExecutionResults "${java_utils_output}" 1)
+  params_output=$(extractExecutionResults "${java_utils_output}" 2)
 
   if [[ $? -ne 0 ]]; then
     echo "[ERROR] Could not get JVM parameters and dynamic configurations properly."
@@ -558,13 +628,24 @@ parseJmJvmArgsAndExportLogs() {
     exit 1
   fi
 
+  jvm_params=$(echo "${params_output}" | head -n1)
   export JVM_ARGS="${JVM_ARGS} ${jvm_params}"
+  export DYNAMIC_PARAMETERS=$(IFS=" " echo "${params_output}" | tail -n1)
 
   export FLINK_INHERITED_LOGS="
 $FLINK_INHERITED_LOGS
 
-JM_RESOURCE_PARAMS extraction logs:
+RESOURCE_PARAMS extraction logs:
 jvm_params: $jvm_params
+dynamic_configs: $DYNAMIC_PARAMETERS
 logs: $logging_output
 "
+}
+
+parseJmArgsAndExportLogs() {
+  parseResourceParamsAndExportLogs GET_JM_RESOURCE_PARAMS
+}
+
+parseTmArgsAndExportLogs() {
+  parseResourceParamsAndExportLogs GET_TM_RESOURCE_PARAMS
 }
