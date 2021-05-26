@@ -53,6 +53,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
+ * 这个主要是利用java的SPI机制来找到对应的facttory，对应应用比如说是 自定义connector。
+ *
  * Utility for working with {@link Factory}s.
  */
 @PublicEvolving
