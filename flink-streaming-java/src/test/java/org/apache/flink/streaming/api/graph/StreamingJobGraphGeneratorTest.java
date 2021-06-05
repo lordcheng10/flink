@@ -342,6 +342,11 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
      */
     @Test
     public void testResourcesForChainedSourceSink() throws Exception {
+        /**
+         * ResourceSpec：
+         * ①首先这个类的命名是什么含义？资源（Resource）规格（Spec）；
+         * ②具体有什么功能？
+         * */
         ResourceSpec resource1 = ResourceSpec.newBuilder(0.1, 100).build();
         ResourceSpec resource2 = ResourceSpec.newBuilder(0.2, 200).build();
         ResourceSpec resource3 = ResourceSpec.newBuilder(0.3, 300).build();
