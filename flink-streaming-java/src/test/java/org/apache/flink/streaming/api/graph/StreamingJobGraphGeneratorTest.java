@@ -335,6 +335,8 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
     }
 
     /**
+     * Source=>Map=>Filter=>Reduce=>Sink
+     * r1       r2   r3      r4      r5
      * Verifies that the resources are merged correctly for chained operators (covers source and
      * sink cases) when generating job graph.
      */

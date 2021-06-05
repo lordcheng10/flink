@@ -104,7 +104,9 @@ public class StreamGraph implements Pipeline {
     private TimeCharacteristic timeCharacteristic;
 
     private GlobalDataExchangeMode globalDataExchangeMode;
-
+    /**
+     * 默认情况下是否把所有顶点放入默认共享组
+     * */
     /** Flag to indicate whether to put all vertices into the same slot sharing group by default. */
     private boolean allVerticesInSameSlotSharingGroupByDefault = true;
 
@@ -256,6 +258,7 @@ public class StreamGraph implements Pipeline {
     }
 
     /**
+     * 是否把所有顶点都放入相同的slot共享组中,默认情况下放入默认共享组
      * Gets whether to put all vertices into the same slot sharing group by default.
      *
      * @return whether to put all vertices into the same slot sharing group by default.

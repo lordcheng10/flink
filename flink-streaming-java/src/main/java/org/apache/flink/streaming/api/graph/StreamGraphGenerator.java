@@ -291,12 +291,29 @@ public class StreamGraphGenerator {
     }
 
     public StreamGraph generate() {
+        /**
+         * 构建一个StreamGraph，那么StreamGraph类是干嘛的呢?
+         * 另外这三个是干嘛的？executionConfig、checkpointConfig、savepointRestoreSettings
+         * */
         streamGraph = new StreamGraph(executionConfig, checkpointConfig, savepointRestoreSettings);
+        /**
+         * runtimeExecutionMode是代表运行模式，分为流和批两种.
+         * shouldExecuteInBatchMode这个主要是判断是否是batch模式.
+         * */
         shouldExecuteInBatchMode = shouldExecuteInBatchMode(runtimeExecutionMode);
+        /**
+         * configureStreamGraph这个从名字上看，应该是加载配置到streamGraph的方法。
+         * */
         configureStreamGraph(streamGraph);
 
+        /**
+         * 存放transform
+         * */
         alreadyTransformed = new HashMap<>();
 
+        /**
+         * 这里似乎是遍历transformations然后分别对每一个进行转化。
+         * */
         for (Transformation<?> transformation : transformations) {
             transform(transformation);
         }
@@ -411,6 +428,8 @@ public class StreamGraphGenerator {
     }
 
     /**
+     * 这将检查我们是否已经转换了它并在这种情况下提前退出。如果不是，它将委托给特定于转换的方法之一。
+     *
      * Transforms one {@code Transformation}.
      *
      * <p>This checks whether we already transformed it and exits early in that case. If not it
