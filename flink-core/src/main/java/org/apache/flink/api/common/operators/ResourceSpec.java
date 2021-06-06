@@ -65,33 +65,61 @@ public final class ResourceSpec implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
+    /**
+     * 表明未知的资源规格
+     * */
     /** A ResourceSpec that indicates an unknown set of resources. */
     public static final ResourceSpec UNKNOWN = new ResourceSpec();
 
     /**
+     * 算子和转变function的默认资源规格。当前等于UNKNOW
      * The default ResourceSpec used for operators and transformation functions. Currently equal to
      * {@link #UNKNOWN}.
      */
     public static final ResourceSpec DEFAULT = UNKNOWN;
 
+    /**
+     *   表示0个资源的资源规格
+     * */
     /** A ResourceSpec that indicates zero amount of resources. */
     public static final ResourceSpec ZERO = ResourceSpec.newBuilder(0.0, 0).build();
 
+    /**
+     * cpuCores表示需要多少cpu核数。
+     * 如果资源规格是未知的，那么cpuCores为null。
+     * */
     /** How many cpu cores are needed. Can be null only if it is unknown. */
     @Nullable private final CPUResource cpuCores;
 
+    /**
+     * 需要多少堆内存。
+     * 如果资源规格为UNKNOWN,那么taskHeapMemory就为null.
+     * */
     /** How much task heap memory is needed. */
     @Nullable // can be null only for UNKNOWN
     private final MemorySize taskHeapMemory;
 
+    /**
+     * 需要多少堆外内存。
+     * 同样的如果为UNKNOWN，那么taskOffHeapMemory就为null.
+     * */
     /** How much task off-heap memory is needed. */
     @Nullable // can be null only for UNKNOWN
     private final MemorySize taskOffHeapMemory;
 
+    /**
+     * 需要多少托管内存。
+     * 同样的如果为UNKNOWN,那么托管内存也为null.
+     *
+     * 有个问题，Flink的内存到底分别有哪些，并且代表什么含义？https://ci.apache.org/projects/flink/flink-docs-release-1.12/zh/deployment/memory/mem_setup_tm.html#%E9%85%8D%E7%BD%AE%E6%80%BB%E5%86%85%E5%AD%98
+     * */
     /** How much managed memory is needed. */
     @Nullable // can be null only for UNKNOWN
     private final MemorySize managedMemory;
 
+    /**
+     * 扩展资源，这里的扩展资源应该是包括GPU这些资源。
+     * */
     private final Map<String, ExternalResource> extendedResources;
 
     private ResourceSpec(
