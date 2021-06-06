@@ -120,6 +120,8 @@ public final class ResourceSpec implements Serializable {
     /**
      * 扩展资源，这里的扩展资源应该是包括GPU这些资源。
      * ExternalResource是干嘛的呀？具体有什么作用?
+     *
+     * 这个的key是啥？资源名称吗？value是ExternalResource对象。
      * */
     private final Map<String, ExternalResource> extendedResources;
 
@@ -181,6 +183,10 @@ public final class ResourceSpec implements Serializable {
         Map<String, ExternalResource> resultExtendedResource = new HashMap<>(extendedResources);
 
 
+        /**
+         * 这里是在干嘛？
+         * 看起来如果要合并两个Resource规格的话，扩展资源也需要合并。
+         * */
         other.extendedResources.forEach(
                 (String name, ExternalResource resource) -> {
                     resultExtendedResource.compute(
@@ -189,6 +195,11 @@ public final class ResourceSpec implements Serializable {
                                     oldResource == null ? resource : oldResource.merge(resource));
                 });
 
+        /**
+         * 这里把一些cpu资源进行合并.
+         * 这里可以看出资源规格(ResourceSpec)和资源（Resource）是两个概念，Resource包括了一些CpuResource等类型资源，是对资源的描述。
+         * 而资源规格(ResourceSpec)更多是对不同类型资源数量的描述.
+         * */
         return new ResourceSpec(
                 this.cpuCores.merge(other.cpuCores),
                 this.taskHeapMemory.add(other.taskHeapMemory),
