@@ -119,6 +119,7 @@ public final class ResourceSpec implements Serializable {
 
     /**
      * 扩展资源，这里的扩展资源应该是包括GPU这些资源。
+     * ExternalResource是干嘛的呀？具体有什么作用?
      * */
     private final Map<String, ExternalResource> extendedResources;
 
@@ -142,6 +143,9 @@ public final class ResourceSpec implements Serializable {
                         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
+    /**
+     * 创建一个资源规格，所有字段都按照未知的标准来设置。
+     * */
     /** Creates a new ResourceSpec with all fields unknown. */
     private ResourceSpec() {
         this.cpuCores = null;
@@ -152,20 +156,30 @@ public final class ResourceSpec implements Serializable {
     }
 
     /**
-     * Used by system internally to merge the other resources of chained operators when generating
-     * the job graph.
+     * 在生成作业图时，由系统内部用于合并链操作符的其他资源。
+     * Used by system internally to merge the other resources of chained operators when generating the job graph.
      *
      * @param other Reference to resource to merge in.
      * @return The new resource with merged values.
      */
     public ResourceSpec merge(final ResourceSpec other) {
+        /**
+         * 这里把要合并的资源做了一个非null检查
+         * */
         checkNotNull(other, "Cannot merge with null resources");
 
+        /**
+         * 如果其中有一个资源是UNKNOWN的，那么合并后的资源就是UNKNOWN.
+         * */
         if (this.equals(UNKNOWN) || other.equals(UNKNOWN)) {
             return UNKNOWN;
         }
 
+        /**
+         * 这里相当于，把extendedResources中的资源copy出来了一份，方便后面使用，而不会影响原来的扩展资源.
+         * */
         Map<String, ExternalResource> resultExtendedResource = new HashMap<>(extendedResources);
+
 
         other.extendedResources.forEach(
                 (String name, ExternalResource resource) -> {
