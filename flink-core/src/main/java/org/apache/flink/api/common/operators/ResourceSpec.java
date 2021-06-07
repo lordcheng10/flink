@@ -209,28 +209,50 @@ public final class ResourceSpec implements Serializable {
     }
 
     /**
+     * 两个资源规格做减法，减去另外一个资源规格.
      * Subtracts another resource spec from this one.
      *
      * @param other The other resource spec to subtract.
      * @return The subtracted resource spec.
      */
     public ResourceSpec subtract(final ResourceSpec other) {
+        /**
+         * null空指针检查
+         * */
         checkNotNull(other, "Cannot subtract null resources");
 
+        /**
+         * 如果有一个是位置资源规格，那么减法就是未知资源规格.
+         * */
         if (this.equals(UNKNOWN) || other.equals(UNKNOWN)) {
             return UNKNOWN;
         }
 
+        /**
+         * 如果当前的资源规格小于传入的other资源规格，那么就报错。
+         * 也就是this-other>=0是合法的，如果<0就是非法的 要报错
+         * */
         checkArgument(
                 other.lessThanOrEqual(this),
                 "Cannot subtract a larger ResourceSpec from this one.");
 
+        /**
+         * copy一份扩展资源map
+         * */
         Map<String, ExternalResource> resultExtendedResources = new HashMap<>(extendedResources);
+
+        /**
+         * 这里到底是干啥呀?
+         * 这里是把扩展资源进行相减，相减后的结果放入resultExtendedResources中。
+         * */
         for (ExternalResource resource : other.extendedResources.values()) {
             resultExtendedResources.merge(
                     resource.getName(), resource, (v1, v2) -> v1.subtract(v2));
         }
 
+        /**
+         * 资源减法
+         * */
         return new ResourceSpec(
                 this.cpuCores.subtract(other.cpuCores),
                 this.taskHeapMemory.subtract(other.taskHeapMemory),
@@ -239,6 +261,11 @@ public final class ResourceSpec implements Serializable {
                 resultExtendedResources);
     }
 
+    /**
+     * 得到cpu核数.
+     * 如果是未知的资源报错。
+     * 这里获取各个资源都需要检查是否是未知资源
+     * */
     public CPUResource getCpuCores() {
         throwUnsupportedOperationExceptionIfUnknown();
         return this.cpuCores;
@@ -276,8 +303,9 @@ public final class ResourceSpec implements Serializable {
     }
 
     /**
-     * Checks the current resource less than or equal with the other resource by comparing all the
-     * fields in the resource.
+     * 比较资源规格，通过所有资源字段来比较。要所有的资源字段都小于，才返回true，才认为是真的<=other资源
+     *
+     * Checks the current resource less than or equal with the other resource by comparing all the fields in the resource.
      *
      * @param other The resource to compare
      * @return True if current resource is less than or equal with the other resource, otherwise
@@ -383,6 +411,9 @@ public final class ResourceSpec implements Serializable {
         return new Builder(new CPUResource(cpuCores), MemorySize.ofMebiBytes(taskHeapMemoryMB));
     }
 
+    /**
+     * 这个感觉有点像工厂模式,Builder用来构建ResourceSpec对象，而且支持串行set配置.
+     * */
     /** Builder for the {@link ResourceSpec}. */
     public static class Builder {
 
