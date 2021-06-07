@@ -1665,7 +1665,11 @@ public class StreamExecutionEnvironment {
     }
 
     /**
+     * 添加一个数据源到流的拓扑结构中。
      * Adds a Data Source to the streaming topology.
+     *
+     * 默认情况下这些source们只会有一个平行度。为了开启并行执行，使用者默认的source应该实现ParallelSourceFunction接口或者继承RichParallelSourceFunction类。
+     * 其中RichParallelSourceFunction是抽象类，ParallelSourceFunction是接口。这两种情况下，生成的源就会有environment中的并行度。如果还想改变，那么就调用DataStreamSource#setParallelism来调整。
      *
      * <p>By default sources have a parallelism of 1. To enable parallel execution, the user defined
      * source should implement {@link
@@ -1674,29 +1678,37 @@ public class StreamExecutionEnvironment {
      * the resulting source will have the parallelism of the environment. To change this afterwards
      * call {@link org.apache.flink.streaming.api.datastream.DataStreamSource#setParallelism(int)}
      *
-     * @param function the user defined function
-     * @param <OUT> type of the returned stream
-     * @return the data stream constructed
+     * @param function the user defined function  用户定义的function
+     * @param <OUT> type of the returned stream   返回的stream类型
+     * @return the data stream constructed  返回流结构类型
      */
     public <OUT> DataStreamSource<OUT> addSource(SourceFunction<OUT> function) {
         return addSource(function, "Custom Source");
     }
 
     /**
+     * 添加一个带有自定义类型信息TypeInformation的数据源来打开一个数据流（这里的自定义类型信息不是指sourceName，而是整个方法继续调用的带有三个参数的方法）。
+     * 只有在某些特殊的场景下才需要传入自定义类型信息，否则都是调用一个参数的addSource，而不用传入sourceName和类型信息.
+     *
+     * 那么就有一个问题了：整个自定义类型信息类TypeInformation到底是干嘛的？有啥作用？
      * Adds a data source with a custom type information thus opening a {@link DataStream}. Only in
      * very special cases does the user need to support type information. Otherwise use {@link
      * #addSource(org.apache.flink.streaming.api.functions.source.SourceFunction)}
      *
-     * @param function the user defined function
-     * @param sourceName Name of the data source
-     * @param <OUT> type of the returned stream
-     * @return the data stream constructed
+     * @param function the user defined function  用户定义的function
+     * @param sourceName Name of the data source  data source的名字
+     * @param <OUT> type of the returned stream   返回的stream类型
+     * @return the data stream constructed   返回的stream对象
      */
     public <OUT> DataStreamSource<OUT> addSource(SourceFunction<OUT> function, String sourceName) {
         return addSource(function, sourceName, null);
     }
 
     /**
+     * 这里的注释单词写错了,整个可以提patch吗?麻蛋整个方法的注释和上面那个一样，感觉是上面那个抄的整个的注释，注释都没仔细改下。
+     *
+     * 仔细看下，这里的addSource也是两个参数，只不过没有sourceName参数，而是另外一个typeInfo来代替，所以说上面的那个方法抄的这里的注释。
+     *
      * Ads a data source with a custom type information thus opening a {@link DataStream}. Only in
      * very special cases does the user need to support type information. Otherwise use {@link
      * #addSource(org.apache.flink.streaming.api.functions.source.SourceFunction)}
@@ -1712,6 +1724,9 @@ public class StreamExecutionEnvironment {
     }
 
     /**
+     *
+     * 这里是三个输入参数的方法，居然注释也一样，而且注释也有个问题。
+     * Ads应该改一下。TypeInformation到底是什么类，有什么功能？
      * Ads a data source with a custom type information thus opening a {@link DataStream}. Only in
      * very special cases does the user need to support type information. Otherwise use {@link
      * #addSource(org.apache.flink.streaming.api.functions.source.SourceFunction)}

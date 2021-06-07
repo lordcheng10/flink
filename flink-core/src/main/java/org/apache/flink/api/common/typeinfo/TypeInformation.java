@@ -32,6 +32,8 @@ import java.util.Collections;
 import java.util.Map;
 
 /**
+ * TypeInformation是Flink类型系统中的核心类。
+ *
  * TypeInformation is the core class of Flink's type system. Flink requires a type information for
  * all types that are used as input or return type of a user function. This type information class
  * acts as the tool to generate serializers and comparators, and to perform semantic checks such as

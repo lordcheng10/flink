@@ -353,11 +353,23 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
         ResourceSpec resource4 = ResourceSpec.newBuilder(0.4, 400).build();
         ResourceSpec resource5 = ResourceSpec.newBuilder(0.5, 500).build();
 
+        /**
+         * 通过反射来获取setResources方法的访问权限
+         * */
         Method opMethod = getSetResourcesMethodAndSetAccessible(SingleOutputStreamOperator.class);
         Method sinkMethod = getSetResourcesMethodAndSetAccessible(DataStreamSink.class);
 
+        /**
+         * 创建流执行环节。
+         * */
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
+
+        /**
+         * 这里添加了一个source算子。
+         * 具体内部干嘛了呢？
+         *
+         * */
         DataStream<Tuple2<Integer, Integer>> source =
                 env.addSource(
                         new ParallelSourceFunction<Tuple2<Integer, Integer>>() {
@@ -370,6 +382,9 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
                         });
         opMethod.invoke(source, resource1);
 
+        /**
+         * map function
+         * */
         DataStream<Tuple2<Integer, Integer>> map =
                 source.map(
                         new MapFunction<Tuple2<Integer, Integer>, Tuple2<Integer, Integer>>() {
@@ -414,6 +429,10 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
                         });
         sinkMethod.invoke(sink, resource5);
 
+        /**
+         * 这里首选创建stream graph，然后创建job graph。
+         *
+         * */
         JobGraph jobGraph = StreamingJobGraphGenerator.createJobGraph(env.getStreamGraph());
 
         JobVertex sourceMapFilterVertex =
