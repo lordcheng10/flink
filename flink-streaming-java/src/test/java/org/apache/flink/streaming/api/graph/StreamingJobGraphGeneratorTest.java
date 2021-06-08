@@ -364,11 +364,9 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
          * */
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-
         /**
          * 这里添加了一个source算子。
          * 具体内部干嘛了呢？
-         *
          * */
         DataStream<Tuple2<Integer, Integer>> source =
                 env.addSource(
@@ -1445,9 +1443,18 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
 
     private static Method getSetResourcesMethodAndSetAccessible(final Class<?> clazz)
             throws NoSuchMethodException {
+        /**
+         * 1.反射获取setResources方法
+         * */
         final Method setResourcesMethod =
                 clazz.getDeclaredMethod("setResources", ResourceSpec.class);
+        /**
+         * 2.开启方法权限
+         * */
         setResourcesMethod.setAccessible(true);
+        /**
+         * 返回method方法
+         * */
         return setResourcesMethod;
     }
 

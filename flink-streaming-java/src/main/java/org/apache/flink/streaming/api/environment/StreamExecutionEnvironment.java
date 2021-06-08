@@ -1724,7 +1724,6 @@ public class StreamExecutionEnvironment {
     }
 
     /**
-     *
      * 这里是三个输入参数的方法，居然注释也一样，而且注释也有个问题。
      * Ads应该改一下。TypeInformation到底是什么类，有什么功能？
      * Ads a data source with a custom type information thus opening a {@link DataStream}. Only in
