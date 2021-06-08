@@ -1741,6 +1741,9 @@ public class StreamExecutionEnvironment {
         return addSource(function, sourceName, typeInfo, Boundedness.CONTINUOUS_UNBOUNDED);
     }
 
+    /**
+     * 这里有4个参数，相比上面的加了一个参数Boundedness boundedness，那么Boundedness类的作用是干嘛的？
+     * */
     private <OUT> DataStreamSource<OUT> addSource(
             final SourceFunction<OUT> function,
             final String sourceName,

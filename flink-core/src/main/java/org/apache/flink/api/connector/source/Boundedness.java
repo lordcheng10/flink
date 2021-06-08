@@ -21,6 +21,8 @@ package org.apache.flink.api.connector.source;
 import org.apache.flink.annotation.PublicEvolving;
 
 /**
+ * 流的有界性。
+ * 一个流要么是有界的（具有有限的record），要么是无限的（具有无限的record）.
  * The boundedness of a stream. A stream could either be "bounded" (a stream with finite records) or
  * "unbounded" (a stream with infinite records).
  */
