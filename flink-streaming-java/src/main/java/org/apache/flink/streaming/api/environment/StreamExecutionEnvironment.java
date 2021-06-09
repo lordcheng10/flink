@@ -1742,17 +1742,23 @@ public class StreamExecutionEnvironment {
     }
 
     /**
-     * 这里有4个参数，相比上面的加了一个参数Boundedness boundedness，那么Boundedness类的作用是干嘛的？
+     * 这里有4个参数，相比上面的加了一个参数Boundedness boundedness，那么Boundedness类的作用是干嘛的？Boundedness类是一个枚举类型，用来标记这个流是无限流还是有限流。
      * */
     private <OUT> DataStreamSource<OUT> addSource(
             final SourceFunction<OUT> function,
             final String sourceName,
             @Nullable final TypeInformation<OUT> typeInfo,
             final Boundedness boundedness) {
+        /**
+         * function、sourceName、boundedness不能为null
+         * */
         checkNotNull(function);
         checkNotNull(sourceName);
         checkNotNull(boundedness);
 
+        /**
+         * 这里是干啥的呀？
+         * */
         TypeInformation<OUT> resolvedTypeInfo =
                 getTypeInfo(function, sourceName, SourceFunction.class, typeInfo);
 
