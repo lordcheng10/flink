@@ -2360,10 +2360,24 @@ public class StreamExecutionEnvironment {
             String sourceName,
             Class<?> baseSourceClass,
             TypeInformation<OUT> typeInfo) {
+        /**
+         * resolvedTypeInfo为什么叫resolvedTypeInfo？这个是啥意思?
+         * */
         TypeInformation<OUT> resolvedTypeInfo = typeInfo;
+        /**
+         * ResultTypeQueryable这个类干啥的? 如果实现了这个接口的话，那么需要实现getProducedType方法，用来获取该实现类的输入数据类型。
+         * 这里的意思是如果source是ResultTypeQueryable的实现类的话，那么直接从source获取source输入的数据类型。
+         * 那么问题来了，这个输入的数据类型拿来干嘛? 那么看起来resolvedTypeInfo是记录source输入数据类型的，那么为啥这么取名呢？为啥不叫 inputDataTypeInfo?
+         * */
         if (resolvedTypeInfo == null && source instanceof ResultTypeQueryable) {
             resolvedTypeInfo = ((ResultTypeQueryable<OUT>) source).getProducedType();
         }
+        /**
+         * 如果不是ResultTypeQueryable类型的source，那么这里resolvedTypeInfo就不为null，也就不会走到if里面，否则会走到if里.
+         * 感觉这里写得不好,用了两个if，看起来不舒服。明明是if else关系.
+         * 如果source不是ResultTypeQueryable的实现类，那么久从下面这个方式获取source输入的数据类型。
+         * TypeExtractor是干啥？Type(类型)Extractor（提取器）
+         * */
         if (resolvedTypeInfo == null) {
             try {
                 resolvedTypeInfo =

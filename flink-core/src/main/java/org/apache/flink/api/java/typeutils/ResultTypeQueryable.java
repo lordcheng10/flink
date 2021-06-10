@@ -22,15 +22,16 @@ import org.apache.flink.annotation.Public;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 
 /**
- * This interface can be implemented by functions and input formats to tell the framework about
- * their produced data type. This method acts as an alternative to the reflection analysis that is
- * otherwise performed and is useful in situations where the produced data type may vary depending
- * on parametrization.
+ * 这个接口可以通过函数和输入格式实现，以告诉框架其生成的数据类型。
+ * This interface can be implemented by functions and input formats to tell the framework about their produced data type.
+ * 此方法可作为反射分析的替代方法，在生成的数据类型可能因参数化而异的情况下非常有用。
+ * This method acts as an alternative to the reflection analysis that is otherwise performed and is useful in situations where the produced data type may vary depending on parametrization.
  */
 @Public
 public interface ResultTypeQueryable<T> {
 
     /**
+     * 通过该函数或输入格式 获取生产数据类型
      * Gets the data type (as a {@link TypeInformation}) produced by this function or input format.
      *
      * @return The data type produced by this function or input format.

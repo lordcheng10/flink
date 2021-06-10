@@ -775,6 +775,11 @@ public class TypeExtractor {
         }
     }
 
+    /**
+     * 这个有意思呀
+     * privateCreateTypeInfo是一个私有方法，通过在该类里面涉及一个公有方法访问它，来实现外部对其访问权限，而不用改原来的接口。
+     * 看起来是同一个人，同一时间写的，为毛这样写？
+     * */
     @PublicEvolving
     public static <IN1, IN2, OUT> TypeInformation<OUT> createTypeInfo(
             Class<?> baseClass,
