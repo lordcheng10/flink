@@ -1762,7 +1762,11 @@ public class StreamExecutionEnvironment {
         TypeInformation<OUT> resolvedTypeInfo =
                 getTypeInfo(function, sourceName, SourceFunction.class, typeInfo);
 
+        /**
+         * 是否并行，是通过function是否实现了ParallelSourceFunction接口来判断的。
+         * */
         boolean isParallel = function instanceof ParallelSourceFunction;
+
 
         clean(function);
 
